@@ -19,8 +19,11 @@
     var playToken = 0;     // ignores callbacks from a stream we already left
 
     var START_TIMEOUT_MS = 12000;   // per attempt
-    var MAX_RETRIES = 2;            // so up to 3 attempts in total
+    var MAX_RETRIES = 2;            // so up to 3 attempts in total (Settings: "Retry a channel")
     var RETRY_DELAY_MS = 2000;
+    var BUFFER_PLAY_S = 4;          // seconds buffered before playback starts (Settings: "Buffering")
+    var BUFFER_RESUME_S = 6;        // seconds buffered after a stall
+    var HTML_BUFFER_S = 16;         // browser (dev) equivalent, for hls.js
     var watchdog = null;
     var retryTimer = null;
     var attempt = 0;
@@ -157,9 +160,9 @@
             });
             avplay.setDisplayRect(rect.x, rect.y, rect.w, rect.h);
             avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_LETTER_BOX');
-            // Live IPTV: start fast, keep a small buffer.
-            try { avplay.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', 3); } catch (e) { /* older firmware */ }
-            try { avplay.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', 5); } catch (e) { /* older firmware */ }
+            // Live IPTV: a small buffer starts fast; a bigger one rides out network hiccups.
+            try { avplay.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', BUFFER_PLAY_S); } catch (e) { /* older firmware */ }
+            try { avplay.setBufferingParam('PLAYER_BUFFER_FOR_RESUME', 'PLAYER_BUFFER_SIZE_IN_SECOND', BUFFER_RESUME_S); } catch (e) { /* older firmware */ }
             status('Loading…');
             avplay.prepareAsync(function () {
                 if (token !== playToken) return;
@@ -234,6 +237,7 @@
             // the same way as on the TV, so the browser behaves like the real thing.
             hls = new global.Hls({
                 lowLatencyMode: false,
+                maxBufferLength: HTML_BUFFER_S,
                 manifestLoadPolicy: {
                     default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 20000, timeoutRetry: null, errorRetry: null }
                 }
@@ -261,6 +265,14 @@
         isTv: !!avplay,
 
         setListener: function (l) { listener = l; },
+
+        /** Apply user settings; takes effect from the next channel started. */
+        configure: function (opts) {
+            if (opts.bufferPlay) BUFFER_PLAY_S = opts.bufferPlay;
+            if (opts.bufferResume) BUFFER_RESUME_S = opts.bufferResume;
+            if (opts.retries !== undefined) MAX_RETRIES = opts.retries;
+            if (!avplay && opts.bufferPlay) HTML_BUFFER_S = Math.max(10, opts.bufferPlay * 4);
+        },
 
         play: function (url) {
             clearTimeout(retryTimer);

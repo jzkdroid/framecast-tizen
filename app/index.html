@@ -60,10 +60,80 @@
         <footer class="keyhints">
             <span><b class="key ok">OK</b> Watch</span>
             <span><b class="key red"></b> Favorite</span>
+            <span><b class="key green"></b> Guide</span>
             <span><b class="key yellow"></b> Search</span>
-            <span><b class="key blue"></b> Sign out</span>
+            <span><b class="key blue"></b> Settings</span>
             <span><b class="key">BACK</b> Exit</span>
         </footer>
+    </section>
+
+    <!-- Programme guide grid -->
+    <section id="guide-screen" class="screen hidden">
+        <header class="topbar">
+            <div class="brand small">Frame<span>Cast</span></div>
+            <div id="guide-title" class="screen-title"></div>
+            <div id="guide-clock" class="clock"></div>
+        </header>
+        <div class="guide">
+            <div class="guide-ruler">
+                <div id="guide-day" class="guide-day"></div>
+                <div id="guide-times" class="guide-times"></div>
+            </div>
+            <div id="guide-body" class="guide-body"></div>
+            <div id="guide-now" class="guide-now hidden"></div>
+        </div>
+        <footer class="guide-info">
+            <div class="guide-info-text">
+                <div id="guide-info-title" class="guide-info-title"></div>
+                <div id="guide-info-meta" class="guide-info-meta"></div>
+            </div>
+            <div class="guide-hints">
+                <span><b class="key ok">OK</b> Watch</span>
+                <span><b class="key">◀ ▶</b> Time</span>
+                <span><b class="key red"></b> Favorite</span>
+                <span><b class="key">◀</b> at start: Categories</span>
+                <span><b class="key">BACK</b> Close</span>
+            </div>
+        </footer>
+        <div id="guide-cats" class="side-panel hidden">
+            <div class="col-title">Show category</div>
+            <ul id="guide-cat-list" class="list active"></ul>
+        </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="settings-screen" class="screen hidden">
+        <header class="topbar">
+            <div class="brand small">Frame<span>Cast</span></div>
+            <div class="screen-title">Settings</div>
+            <div class="clock"></div>
+        </header>
+        <div class="settings">
+            <ul id="settings-list" class="settings-list"></ul>
+            <aside id="settings-help" class="settings-help"></aside>
+        </div>
+        <footer class="keyhints">
+            <span><b class="key">▲ ▼</b> Choose</span>
+            <span><b class="key">◀ ▶</b> Change</span>
+            <span><b class="key ok">OK</b> Change / open</span>
+            <span><b class="key">BACK</b> Done</span>
+        </footer>
+    </section>
+
+    <!-- Category order & visibility -->
+    <section id="cated-screen" class="screen hidden">
+        <header class="topbar">
+            <div class="brand small">Frame<span>Cast</span></div>
+            <div class="screen-title">Categories</div>
+            <div class="clock"></div>
+        </header>
+        <div class="settings">
+            <ul id="cated-list" class="cated-list"></ul>
+            <aside class="settings-help">
+                <p id="cated-help"></p>
+                <p class="note">Favorites, All channels and the menu entries always stay at the top.</p>
+            </aside>
+        </div>
     </section>
 
     <!-- Full-screen playback overlay -->
@@ -78,9 +148,20 @@
             <div id="osd-now" class="osd-now"></div>
             <div class="osd-progress"><div id="osd-bar"></div></div>
             <div id="osd-next" class="osd-next"></div>
-            <div class="osd-hints">CH ▲▼ / ▲▼ change channel · INFO / OK show this · BACK channel list</div>
+            <div class="osd-hints">CH ▲▼ change channel · ◀ menu · OK / INFO show this · GREEN guide · BACK channel list</div>
         </div>
         <div id="player-status" class="player-status hidden"></div>
+        <!-- Menu over the video (◀ while watching) -->
+        <div id="overlay" class="overlay hidden">
+            <div class="overlay-col">
+                <div class="col-title">Menu</div>
+                <ul id="ov-cat-list" class="list"></ul>
+            </div>
+            <div class="overlay-col wide">
+                <div class="col-title" id="ov-chan-title">Channels</div>
+                <ul id="ov-chan-list" class="list channels-ov"></ul>
+            </div>
+        </div>
     </section>
 
     <div id="toast" class="toast hidden"></div>
@@ -89,6 +170,8 @@
     <script src="js/xtream.js"></script>
     <script src="js/player.js"></script>
     <script src="js/keys.js"></script>
+    <script src="js/settings.js"></script>
+    <script src="js/guide.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

@@ -1,8 +1,10 @@
-/* FrameCast — screens, remote navigation, channel lists, guide, favorites and search. */
+/* FrameCast — screens, remote navigation, channel lists, menu overlay, favorites and search. */
 (function (global) {
     'use strict';
 
     var Store = global.Store, Xtream = global.Xtream, Player = global.Player, Keys = global.Keys;
+    var Settings = global.Settings;
+    var VERSION = '1.1.0';
 
     function $(id) { return document.getElementById(id); }
 
@@ -14,18 +16,32 @@
 
     function pad(n) { return (n < 10 ? '0' : '') + n; }
 
+    function is24h() { return Settings.get('clock') === '24'; }
+
+    /** Clock in the top bar: "8:05 PM" or "20:05". */
     function clockText(ms) {
-        var d = new Date(ms);
-        var h = d.getHours(), m = d.getMinutes();
-        var ampm = h >= 12 ? 'PM' : 'AM';
-        h = h % 12 || 12;
-        return h + ':' + pad(m) + ' ' + ampm;
+        var d = new Date(ms), h = d.getHours(), m = d.getMinutes();
+        if (is24h()) return pad(h) + ':' + pad(m);
+        return (h % 12 || 12) + ':' + pad(m) + ' ' + (h >= 12 ? 'PM' : 'AM');
     }
 
+    /** Compact time for lists and the guide: "8:05" / "20:05". */
     function shortTime(ms) {
         var d = new Date(ms);
-        var h = d.getHours() % 12 || 12;
-        return h + ':' + pad(d.getMinutes());
+        if (is24h()) return pad(d.getHours()) + ':' + pad(d.getMinutes());
+        return (d.getHours() % 12 || 12) + ':' + pad(d.getMinutes());
+    }
+
+    /** Guide ruler/info: "8:30 PM" / "20:30". */
+    function timeText(ms) { return clockText(ms); }
+
+    function dayText(ms) {
+        var d = new Date(ms), today = new Date();
+        var start = function (x) { return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+        var diff = Math.round((start(d) - start(today)) / 86400000);
+        if (diff === 0) return 'Today';
+        if (diff === 1) return 'Tomorrow';
+        return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + d.getDate();
     }
 
     /* ------------------------------------------------------------------ */
@@ -92,10 +108,12 @@
 
     var S = {
         screen: 'login',
+        returnTo: 'browse',       // where Guide / Settings go back to
         zone: 'cat',              // browse focus: 'cat' | 'chan' | 'search'
         api: null,
         accountKey: '',
-        categories: [],
+        rawCats: [],              // provider categories that have channels, provider order
+        categories: [],           // what the side menu shows (menu entries + favorites + ordered, visible categories)
         channels: [],
         byCat: {},
         byNum: {},
@@ -103,11 +121,23 @@
         epg: {},                  // streamId -> { at, items } | { pending: true }
         playing: null,            // channel object
         playingList: [],
+        playingCatId: 'all',
+        overlay: false,
+        ovZone: 'chan',
         searchText: '',
         lastSel: {}               // category id -> selected channel id
     };
 
-    var catList, chanList;
+    // Menu entries shown at the top of the category column (and the overlay).
+    var MENU = [
+        { id: 'm-guide', name: 'Guide', menu: 'guide', icon: '▦ ' },
+        { id: 'search', name: 'Search', menu: 'search', icon: '⌕ ' },
+        { id: 'm-settings', name: 'Settings', menu: 'settings', icon: '⚙ ', last: true }
+    ];
+    var FAV = { id: 'fav', name: 'Favorites', special: true, icon: '★ ' };
+    var ALL = { id: 'all', name: 'All channels', special: true };
+
+    var catList, chanList, ovCatList, ovChanList, guide, settingsScreen, catEditor;
     var timers = {};
 
     function later(name, ms, fn) {
@@ -122,13 +152,40 @@
         later('toast', ms || 2200, function () { el.classList.add('hidden'); });
     }
 
+    var SCREENS = ['login', 'browse', 'player', 'guide', 'settings', 'cated'];
+
     function showScreen(name) {
         S.screen = name;
-        ['login', 'browse', 'player'].forEach(function (n) {
+        SCREENS.forEach(function (n) {
             $(n + '-screen').classList.toggle('hidden', n !== name);
         });
         document.body.classList.toggle('playing', name === 'player');
+        // The preview window only exists on the browse screen.
+        document.body.classList.toggle('video-under', name === 'browse' && $('preview').classList.contains('live'));
+        updateClock();
     }
+
+    /* ------------------------------------------------------------------ */
+    /* Settings applied to the player and API                              */
+    /* ------------------------------------------------------------------ */
+
+    function applyPlayerSettings() {
+        var b = Settings.buffer();
+        Player.configure({ bufferPlay: b.play, bufferResume: b.resume, retries: Settings.get('retries') });
+    }
+
+    function applyFormat(api) {
+        if (!api) return;
+        if (api.autoFormat === undefined) api.autoFormat = api.outputFormat;
+        var f = Settings.get('format');
+        api.outputFormat = f === 'auto' ? api.autoFormat : f;
+    }
+
+    Settings.onChange(function (key) {
+        if (key === 'buffer' || key === 'retries') applyPlayerSettings();
+        if (key === 'format') applyFormat(S.api);
+        if (key === 'clock') updateClock();
+    });
 
     /* ------------------------------------------------------------------ */
     /* Login                                                               */
@@ -166,17 +223,32 @@
     // Waits before each automatic retry of sign-in / channel loading. Right after the TV
     // wakes up its network often isn't connected yet, so the first try commonly fails.
     var CONNECT_RETRY_DELAYS = [3, 6, 10, 15];
+    var firstEntry = true;
 
     function connect(account, fromForm, attemptNo) {
         var attemptIndex = attemptNo || 0;
         var api = new Xtream(account.server, account.username, account.password);
         $('login-btn').disabled = true;
         $('login-error').textContent = attemptIndex ? 'Signing in (attempt ' + (attemptIndex + 1) + ')…' : 'Signing in…';
+        var cats = null;
         api.login().then(function () {
             $('login-error').textContent = 'Loading channels…';
-            return Promise.all([api.liveCategories(), api.liveStreams()]);
+            // One request at a time: some providers limit simultaneous connections and answer
+            // the extra request with an empty list.
+            return api.liveCategories();
+        }).then(function (c) {
+            cats = c;
+            return api.liveStreams();
+        }).then(function (chans) {
+            if (!chans.length) {
+                // A signed-in account with no channels is almost always a temporary provider
+                // hiccup (rate limiting, busy server), so treat it like a failed request and retry.
+                throw new Error('The provider sent an empty channel list');
+            }
+            return [cats, chans];
         }).then(function (res) {
             Store.write('account', account);
+            applyFormat(api);
             S.api = api;
             S.accountKey = api.server + '|' + api.username;
             S.favs = Store.read('favs:' + S.accountKey, []);
@@ -211,17 +283,47 @@
     function signOut() {
         Player.stop();
         S.playing = null;
+        setPreviewLive(false);
         Store.remove('account');
         S.api = null;
         S.channels = [];
         S.epg = {};
+        firstEntry = true;
         showLogin('Signed out.', null);
         $('login-pass').value = '';
     }
 
+    function refreshLibrary() {
+        var account = Store.read('account', null);
+        if (!account) return;
+        toast('Reloading channels…');
+        S.epg = {};
+        connect(account, false);
+    }
+
     /* ------------------------------------------------------------------ */
-    /* Library                                                             */
+    /* Library and category order                                          */
     /* ------------------------------------------------------------------ */
+
+    function catPrefs() {
+        return Store.read('catPrefs:' + S.accountKey, { order: [], hidden: {} });
+    }
+
+    /** Provider categories in the user's saved order (new categories go to the end). */
+    function orderedCats() {
+        var order = catPrefs().order || [], pos = {};
+        order.forEach(function (id, i) { pos[id] = i; });
+        return S.rawCats.map(function (c, i) { return { c: c, i: i }; }).sort(function (a, b) {
+            var pa = pos[a.c.id] !== undefined ? pos[a.c.id] : order.length + a.i;
+            var pb = pos[b.c.id] !== undefined ? pos[b.c.id] : order.length + b.i;
+            return pa - pb;
+        }).map(function (x) { return x.c; });
+    }
+
+    function rebuildCategories() {
+        var hidden = catPrefs().hidden || {};
+        S.categories = MENU.concat([FAV, ALL], orderedCats().filter(function (c) { return !hidden[c.id]; }));
+    }
 
     function buildLibrary(cats, chans) {
         S.channels = chans;
@@ -231,18 +333,25 @@
             (S.byCat[c.cat] = S.byCat[c.cat] || []).push(c);
             if (!S.byNum[c.num]) S.byNum[c.num] = c;
         });
-        S.categories = [
-            { id: 'fav', name: 'Favorites', special: true },
-            { id: 'all', name: 'All channels', special: true },
-            { id: 'search', name: 'Search', special: true }
-        ].concat(cats.filter(function (c) { return S.byCat[c.id] && S.byCat[c.id].length; }));
+        S.rawCats = cats.filter(function (c) { return S.byCat[c.id] && S.byCat[c.id].length; });
         var known = {};
         cats.forEach(function (c) { known[c.id] = true; });
         var orphans = chans.filter(function (c) { return !known[c.cat]; });
         if (orphans.length) {
             S.byCat.other = orphans;
-            S.categories.push({ id: 'other', name: 'Other' });
+            S.rawCats.push({ id: 'other', name: 'Other' });
         }
+        rebuildCategories();
+    }
+
+    function findCat(id) {
+        for (var i = 0; i < S.categories.length; i++) if (S.categories[i].id === id) return S.categories[i];
+        return null;
+    }
+
+    function catIndex(id) {
+        for (var i = 0; i < S.categories.length; i++) if (S.categories[i].id === id) return i;
+        return -1;
     }
 
     function channelsFor(catId) {
@@ -258,7 +367,7 @@
     }
 
     function countFor(cat) {
-        if (cat.id === 'search') return '';
+        if (cat.menu) return '';
         if (cat.id === 'fav') return S.favs.length;
         if (cat.id === 'all') return S.channels.length;
         return (S.byCat[cat.id] || []).length;
@@ -274,7 +383,7 @@
         return out;
     }
 
-    function isFav(ch) { return ch && S.favs.indexOf(ch.id) !== -1; }
+    function isFav(ch) { return !!ch && S.favs.indexOf(ch.id) !== -1; }
 
     function toggleFav(ch) {
         if (!ch) return;
@@ -282,22 +391,26 @@
         if (i === -1) { S.favs.push(ch.id); toast('★ Added ' + ch.name + ' to Favorites'); }
         else { S.favs.splice(i, 1); toast('Removed ' + ch.name + ' from Favorites'); }
         Store.write('favs:' + S.accountKey, S.favs);
-        catList.render();
-        if (currentCat().id === 'fav') {
-            loadChannels(Math.min(chanList.sel, S.favs.length - 1));
-        } else {
-            chanList.render();
+        if (S.screen === 'browse') {
+            catList.render();
+            if (currentCat().id === 'fav') loadChannels(Math.min(chanList.sel, S.favs.length - 1));
+            else chanList.render();
+        }
+        if (S.overlay) {
+            ovCatList.render();
+            if (ovCat().id === 'fav') loadOverlayChannels(Math.min(ovChanList.sel, S.favs.length - 1));
+            else ovChanList.render();
         }
         if (S.screen === 'player') renderOsd();
     }
 
     /* ------------------------------------------------------------------ */
-    /* Browse screen                                                       */
+    /* Rows                                                                */
     /* ------------------------------------------------------------------ */
 
     function renderCategoryRow(cat, selected) {
-        var icon = cat.id === 'fav' ? '★ ' : cat.id === 'search' ? '⌕ ' : '';
-        return '<li class="' + (selected ? 'selected' : '') + '"><span class="label">' + icon + esc(cat.name) +
+        var cls = (selected ? 'selected' : '') + (cat.menu ? ' menu-item' : '') + (cat.last ? ' menu-last' : '');
+        return '<li class="' + cls + '"><span class="label">' + (cat.icon || '') + esc(cat.name) +
             '</span><span class="count">' + esc(countFor(cat)) + '</span></li>';
     }
 
@@ -313,40 +426,74 @@
             '</li>';
     }
 
+    function emptyText(cat) {
+        if (cat.menu === 'guide') return 'Press OK to open the programme guide.';
+        if (cat.menu === 'settings') return 'Press OK to open Settings: buffering, stream format, clock, category order and more.';
+        if (cat.id === 'fav') return 'No favorites yet. Highlight a channel and press the red button to add it.';
+        if (cat.id === 'search') return S.searchText ? 'No channels match "' + S.searchText + '".' : 'Press OK to type a channel name.';
+        return 'This category is empty.';
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Browse screen                                                       */
+    /* ------------------------------------------------------------------ */
+
     function currentCat() { return catList.current() || S.categories[0]; }
+
+    /** A real channel category to start the guide/overlay on. */
+    function lastRealCat() {
+        var c = currentCat();
+        if (c && !c.menu && channelsFor(c.id).length) return c.id;
+        return S.favs.length ? 'fav' : 'all';
+    }
 
     function enterBrowse() {
         showScreen('browse');
         var last = Store.read('lastCat:' + S.accountKey, 'all');
-        var idx = 0;
-        S.categories.forEach(function (c, i) { if (c.id === last) idx = i; });
-        if (last === 'fav' && !S.favs.length) idx = 1;
+        var idx = catIndex(last);
+        if (idx === -1 || (last === 'fav' && !S.favs.length)) idx = catIndex('all');
         catList.setItems(S.categories, idx);
         loadChannels();
         setZone(chanList.items.length ? 'chan' : 'cat');
-        updateClock();
+
+        if (firstEntry && Settings.get('startup') === 'last') {
+            var lastId = Store.read('lastChannel:' + S.accountKey, null);
+            var ch = null;
+            for (var i = 0; lastId && i < S.channels.length; i++) if (S.channels[i].id === lastId) { ch = S.channels[i]; break; }
+            if (ch) play(ch, chanList.items.indexOf(ch) !== -1 ? chanList.items : S.channels, chanList.items.indexOf(ch) !== -1 ? currentCat().id : 'all');
+        } else if (!firstEntry && S.playing) {
+            backToBrowse();   // channel list reloaded while something was playing: keep it in the preview
+        }
+        firstEntry = false;
+    }
+
+    /** Back to the browse screen after Guide/Settings (categories may have changed). */
+    function resumeBrowse() {
+        var curId = currentCat() ? currentCat().id : 'all';
+        var idx = catIndex(curId);
+        catList.setItems(S.categories, idx === -1 ? catIndex('all') : idx);
+        var keepSel = chanList.sel;
+        if (currentCat().id === curId) loadChannels(keepSel); else loadChannels();
+        backToBrowse();
     }
 
     function loadChannels(selIndex) {
         var cat = currentCat();
         loadedCatId = cat.id;
-        var items = channelsFor(cat.id);
+        if (!cat.menu || cat.id === 'search') Store.write('lastCat:' + S.accountKey, cat.menu ? 'all' : cat.id);
+        var items = cat.menu && cat.id !== 'search' ? [] : channelsFor(cat.id);
         var sel = selIndex;
         if (sel === undefined) {
             sel = 0;
             var lastId = S.lastSel[cat.id];
             if (lastId) items.forEach(function (c, i) { if (c.id === lastId) sel = i; });
         }
-        $('channel-title').textContent = cat.name + (cat.id === 'search' ? '' : ' · ' + items.length);
+        $('channel-title').textContent = cat.name + (cat.menu ? '' : ' · ' + items.length);
         $('search-box').classList.toggle('hidden', cat.id !== 'search');
         chanList.setItems(items, sel);
         var empty = $('channel-empty');
         if (!items.length) {
-            empty.textContent = cat.id === 'fav'
-                ? 'No favorites yet. Highlight a channel and press the red button to add it.'
-                : cat.id === 'search'
-                    ? (S.searchText ? 'No channels match "' + S.searchText + '".' : 'Press OK to type a channel name.')
-                    : 'This category is empty.';
+            empty.textContent = emptyText(cat);
             empty.classList.remove('hidden');
         } else {
             empty.classList.add('hidden');
@@ -398,12 +545,13 @@
     }
 
     function updateClock() {
-        $('clock').textContent = clockText(Date.now());
+        var text = clockText(Date.now());
+        Array.prototype.forEach.call(document.querySelectorAll('.clock'), function (el) { el.textContent = text; });
     }
 
     function setPreviewLive(on) {
         $('preview').classList.toggle('live', on);
-        document.body.classList.toggle('video-under', on);
+        document.body.classList.toggle('video-under', on && S.screen === 'browse');
     }
 
     function previewRect() {
@@ -412,6 +560,7 @@
     }
 
     function backToBrowse() {
+        closeOverlay();
         showScreen('browse');
         catList.render();
         chanList.render();
@@ -434,7 +583,7 @@
     }
 
     /* ------------------------------------------------------------------ */
-    /* Guide (EPG)                                                         */
+    /* Guide data (EPG)                                                    */
     /* ------------------------------------------------------------------ */
 
     var epgQueue = [];
@@ -461,11 +610,12 @@
     }
 
     function pumpEpg() {
-        while (epgActive < 2 && epgQueue.length) {
+        while (epgActive < 3 && epgQueue.length) {
             (function (ch) {
                 epgActive++;
                 S.epg[ch.id] = { pending: true };
-                S.api.shortEpg(ch.id, 8).then(function (items) {
+                // ~24 listings covers most of a day, enough for the guide grid.
+                S.api.shortEpg(ch.id, 24).then(function (items) {
                     S.epg[ch.id] = { at: Date.now(), items: items };
                 }).catch(function () {
                     S.epg[ch.id] = { at: Date.now(), items: [] };
@@ -484,7 +634,11 @@
             if (cur && cur.id === ch.id) renderDetails();
             if (chanList.visibleItems().indexOf(ch) !== -1) chanList.render();
         }
-        if (S.screen === 'player' && S.playing && S.playing.id === ch.id) renderOsd();
+        if (S.screen === 'guide') guide.epgUpdated(ch);
+        if (S.screen === 'player') {
+            if (S.playing && S.playing.id === ch.id) renderOsd();
+            if (S.overlay && ovChanList.visibleItems().indexOf(ch) !== -1) ovChanList.render();
+        }
     }
 
     function nowPlaying(ch) {
@@ -511,15 +665,17 @@
     /* Player screen                                                       */
     /* ------------------------------------------------------------------ */
 
-    function play(ch, list) {
+    function play(ch, list, catId) {
         // Re-selecting the channel that's already on just goes full screen, unless it failed:
         // then choosing it again is a retry.
         var sameChannel = S.playing && S.playing.id === ch.id && Player.isPlaying() && !Player.hasFailed();
         S.playing = ch;
         S.playingList = list && list.length ? list.slice() : [ch];
+        S.playingCatId = catId || S.playingCatId || 'all';
         Store.write('lastChannel:' + S.accountKey, ch.id);
-        showScreen('player');
+        closeOverlay();
         setPreviewLive(false);
+        showScreen('player');
         Player.setRect(null);
         if (!sameChannel) {
             hideStatus();
@@ -535,7 +691,7 @@
         var i = list.indexOf(S.playing);
         if (i === -1) i = 0;
         var next = list[(i + delta + list.length) % list.length];
-        if (next) play(next, list);
+        if (next) play(next, list, S.playingCatId);
     }
 
     function renderOsd() {
@@ -558,11 +714,17 @@
         $('osd-next').textContent = next ? 'Next: ' + shortTime(next.start) + '  ' + next.title : '';
     }
 
+    function osdVisible() { return !$('osd').classList.contains('faded'); }
+
     function showOsd() {
         renderOsd();
         $('osd').classList.remove('faded');
-        later('osd', 5000, function () { $('osd').classList.add('faded'); });
+        var secs = Settings.get('osd');
+        if (secs > 0) later('osd', secs * 1000, hideOsd);
+        else clearTimeout(timers.osd);
     }
+
+    function hideOsd() { $('osd').classList.add('faded'); }
 
     function showStatus(text) {
         var el = $('player-status');
@@ -578,10 +740,148 @@
             if (text) showStatus(text); else hideStatus();
         },
         onError: function (message) {
-            if (S.screen === 'player') { showStatus(message + '\nPress OK to try again.'); showOsd(); }
+            if (S.screen === 'player') { showStatus(message + '\nPress OK to try again.'); if (!S.overlay) showOsd(); }
             else toast(message, 4000);
         }
     });
+
+    /* ------------------------------------------------------------------ */
+    /* Menu overlay over the video (◀ while watching)                      */
+    /* ------------------------------------------------------------------ */
+
+    function ovCat() { return ovCatList.current() || S.categories[0]; }
+
+    function openOverlay() {
+        S.overlay = true;
+        hideOsd();
+        $('overlay').classList.remove('hidden');
+        var idx = catIndex(S.playingCatId);
+        if (idx === -1) idx = catIndex('all');
+        ovCatList.setItems(S.categories, idx);
+        var items = channelsFor(ovCat().id);
+        var sel = S.playing ? items.indexOf(S.playing) : 0;
+        loadOverlayChannels(sel === -1 ? 0 : sel);
+        setOvZone('chan');
+    }
+
+    function closeOverlay() {
+        if (!S.overlay) return;
+        S.overlay = false;
+        $('overlay').classList.add('hidden');
+    }
+
+    function loadOverlayChannels(sel) {
+        var cat = ovCat();
+        var items = cat.menu && cat.id !== 'search' ? [] : channelsFor(cat.id);
+        $('ov-chan-title').textContent = cat.menu ? emptyText(cat) : cat.name + ' · ' + items.length;
+        ovChanList.setItems(items, sel || 0);
+        overlayEpg();
+    }
+
+    function setOvZone(z) {
+        S.ovZone = z;
+        ovCatList.ul.classList.toggle('active', z === 'cat');
+        ovChanList.ul.classList.toggle('active', z === 'chan');
+    }
+
+    function overlayEpg() {
+        later('ovEpg', 300, function () { ovChanList.visibleItems().forEach(function (c) { loadEpg(c, false); }); });
+    }
+
+    function openMenuEntry(cat) {
+        if (cat.menu === 'guide') { openGuide(); return true; }
+        if (cat.menu === 'settings') { openSettings(); return true; }
+        if (cat.menu === 'search') { openSearch(); return true; }
+        return false;
+    }
+
+    function onOverlayKey(a) {
+        if (/^\d$/.test(a)) { typeDigit(a); return true; }
+        switch (a) {
+            case 'back': closeOverlay(); showOsd(); return true;
+            case 'green': openGuide(); return true;
+            case 'yellow': openSearch(); return true;
+            case 'blue': openSettings(); return true;
+        }
+        if (S.ovZone === 'cat') {
+            switch (a) {
+                case 'up': case 'down':
+                    if (ovCatList.move(a === 'up' ? -1 : 1)) later('ovCat', 120, function () { loadOverlayChannels(0); });
+                    return true;
+                case 'chup': case 'chdown':
+                    if (ovCatList.move((a === 'chup' ? -1 : 1) * ovCatList.visibleCount())) loadOverlayChannels(0);
+                    return true;
+                case 'ok': case 'right':
+                    clearTimeout(timers.ovCat);
+                    if (openMenuEntry(ovCat())) return true;
+                    loadOverlayChannels(0);
+                    if (ovChanList.items.length) setOvZone('chan');
+                    return true;
+                case 'left':
+                    return true;
+            }
+            return true;
+        }
+        switch (a) {
+            case 'up': case 'down':
+                if (ovChanList.move(a === 'up' ? -1 : 1)) overlayEpg();
+                return true;
+            case 'chup': case 'chdown':
+                if (ovChanList.move((a === 'chup' ? -1 : 1) * ovChanList.visibleCount())) overlayEpg();
+                return true;
+            case 'left': setOvZone('cat'); return true;
+            case 'right': closeOverlay(); showOsd(); return true;
+            case 'ok': case 'play': case 'playpause': {
+                var ch = ovChanList.current();
+                if (ch) play(ch, ovChanList.items, ovCat().id);
+                return true;
+            }
+            case 'red': toggleFav(ovChanList.current()); return true;
+        }
+        return true;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Guide, Settings, Search                                             */
+    /* ------------------------------------------------------------------ */
+
+    function rememberReturn() {
+        // Opening from the overlay returns to full-screen video; from Settings/Guide keep the original.
+        if (S.screen === 'browse' || S.screen === 'player') S.returnTo = S.screen;
+        closeOverlay();
+    }
+
+    function goBack() {
+        if (S.returnTo === 'player' && S.playing) {
+            showScreen('player');
+            Player.setRect(null);
+            showOsd();
+        } else {
+            resumeBrowse();
+        }
+    }
+
+    function openGuide() {
+        rememberReturn();
+        var cat = S.returnTo === 'player' ? (findCat(S.playingCatId) && !findCat(S.playingCatId).menu ? S.playingCatId : 'all') : lastRealCat();
+        showScreen('guide');
+        guide.open(cat, S.playing ? S.playing.id : (chanList.current() && chanList.current().id));
+    }
+
+    function openSettings() {
+        rememberReturn();
+        showScreen('settings');
+        settingsScreen.open();
+    }
+
+    function openSearch() {
+        closeOverlay();
+        if (S.screen !== 'browse') backToBrowse();
+        catList.sel = catIndex('search');
+        catList.render();
+        loadChannels();
+        setZone('search');
+    }
 
     /* ------------------------------------------------------------------ */
     /* Number entry (type a channel number on the remote)                  */
@@ -598,9 +898,9 @@
             digits = '';
             if (!ch) { toast('No channel with that number'); return; }
             if (S.screen === 'player') {
-                play(ch, S.channels);
+                play(ch, S.channels, 'all');
             } else {
-                catList.sel = 1; // All channels
+                catList.sel = catIndex('all');
                 catList.render();
                 loadChannels(S.channels.indexOf(ch));
                 setZone('chan');
@@ -612,13 +912,13 @@
     /* Keys                                                                */
     /* ------------------------------------------------------------------ */
 
-    var exitArmed = false, signOutArmed = false;
+    var exitArmed = false;
 
-    function armOnce(flag, text, fn) {
-        if (flag === 'exit' ? exitArmed : signOutArmed) { fn(); return; }
-        if (flag === 'exit') exitArmed = true; else signOutArmed = true;
-        toast(text, 2500);
-        later('arm' + flag, 2500, function () { exitArmed = false; signOutArmed = false; });
+    function armExit() {
+        if (exitArmed) { Keys.exitApp(); return; }
+        exitArmed = true;
+        toast('Press BACK again to exit', 2500);
+        later('armExit', 2500, function () { exitArmed = false; });
     }
 
     function onLoginKey(a) {
@@ -637,7 +937,7 @@
                 if (el.tagName === 'BUTTON') { if (!el.disabled) submitLogin(); }
                 else el.focus();
                 return true;
-            case 'back': armOnce('exit', 'Press BACK again to exit', Keys.exitApp); return true;
+            case 'back': armExit(); return true;
         }
         return false;
     }
@@ -655,17 +955,9 @@
         if (/^\d$/.test(a)) { typeDigit(a); return true; }
 
         switch (a) {
-            case 'yellow':
-                S.categories.forEach(function (c, i) { if (c.id === 'search') catList.sel = i; });
-                catList.render();
-                loadChannels();
-                setZone('search');
-                return true;
-            case 'blue':
-                armOnce('signout', 'Press the blue button again to sign out', signOut);
-                return true;
-            case 'green':
-                return true;
+            case 'green': openGuide(); return true;
+            case 'yellow': openSearch(); return true;
+            case 'blue': openSettings(); return true;
         }
 
         if (S.zone === 'cat') {
@@ -678,15 +970,18 @@
                 case 'chup': case 'chdown':
                     if (catList.move(a === 'chup' ? -catList.visibleCount() : catList.visibleCount())) loadChannels();
                     return true;
-                case 'right': case 'ok':
+                case 'right': case 'ok': {
                     clearTimeout(timers.catLoad);
-                    if (chanList.items.length === 0 || currentCat().id !== channelsCatId()) loadChannels();
-                    if (currentCat().id === 'search' && (a === 'ok' || !chanList.items.length)) setZone('search');
+                    var cat = currentCat();
+                    if (cat.menu && cat.id !== 'search') { openMenuEntry(cat); return true; }
+                    if (chanList.items.length === 0 || cat.id !== channelsCatId()) loadChannels();
+                    if (cat.id === 'search' && (a === 'ok' || !chanList.items.length)) setZone('search');
                     else if (chanList.items.length) setZone('chan');
                     return true;
+                }
                 case 'back':
                     if (S.playing) { stopPreview(); return true; }
-                    armOnce('exit', 'Press BACK again to exit', Keys.exitApp);
+                    armExit();
                     return true;
             }
             return false;
@@ -704,15 +999,16 @@
                 setZone(currentCat().id === 'search' ? 'search' : 'cat');
                 return true;
             case 'ok': case 'play': case 'playpause':
-                if (chanList.current()) play(chanList.current(), chanList.items);
+                if (chanList.current()) play(chanList.current(), chanList.items, currentCat().id);
                 return true;
             case 'red':
                 toggleFav(chanList.current());
                 return true;
-            case 'info':
+            case 'info': {
                 var ch = chanList.current();
                 if (ch) { delete S.epg[ch.id]; loadEpg(ch, true); renderDetails(); }
                 return true;
+            }
             case 'back':
                 if (S.playing) { stopPreview(); return true; }
                 setZone('cat');
@@ -726,17 +1022,25 @@
     function channelsCatId() { return loadedCatId; }
 
     function onPlayerKey(a) {
+        if (S.overlay) return onOverlayKey(a);
         if (/^\d$/.test(a)) { typeDigit(a); return true; }
         switch (a) {
             case 'up': case 'chup': zap(1); return true;
             case 'down': case 'chdown': zap(-1); return true;
+            case 'left': openOverlay(); return true;
             case 'ok':
                 if (Player.hasFailed()) { hideStatus(); Player.retry(); showOsd(); return true; }
+                if (osdVisible() && Settings.get('osd') === 0) { hideOsd(); return true; }
                 showOsd();
                 return true;
-            case 'info': case 'left': case 'right': showOsd(); return true;
+            case 'info': case 'right': showOsd(); return true;
             case 'red': toggleFav(S.playing); showOsd(); return true;
-            case 'back': hideStatus(); backToBrowse(); return true;
+            case 'green': openGuide(); return true;
+            case 'yellow': openSearch(); return true;
+            case 'blue': openSettings(); return true;
+            case 'back':
+                if (osdVisible() && Settings.get('osd') === 0) { hideOsd(); return true; }
+                hideStatus(); backToBrowse(); return true;
             case 'stop': hideStatus(); stopPreview(); backToBrowse(); return true;
         }
         return false;
@@ -750,6 +1054,9 @@
         if (S.screen === 'login') handled = onLoginKey(a);
         else if (S.screen === 'browse') handled = onBrowseKey(a);
         else if (S.screen === 'player') handled = onPlayerKey(a);
+        else if (S.screen === 'guide') handled = guide.onKey(a);
+        else if (S.screen === 'settings') handled = settingsScreen.onKey(a);
+        else if (S.screen === 'cated') handled = catEditor.onKey(a);
         if (handled) e.preventDefault();
     });
 
@@ -759,9 +1066,57 @@
 
     function init() {
         Keys.register();
+        applyPlayerSettings();
 
         catList = new VList($('category-list'), 72, renderCategoryRow);
         chanList = new VList($('channel-list'), 88, renderChannelRow);
+        ovCatList = new VList($('ov-cat-list'), 72, renderCategoryRow);
+        ovChanList = new VList($('ov-chan-list'), 88, renderChannelRow);
+
+        guide = new global.Guide({
+            esc: esc,
+            timeText: timeText,
+            dayText: dayText,
+            channels: channelsFor,
+            pickerCategories: function () {
+                return S.categories.filter(function (c) { return !c.menu; });
+            },
+            categoryName: function (id) { var c = findCat(id); return c ? c.name : 'All channels'; },
+            epgFor: function (ch) { return S.epg[ch.id]; },
+            loadEpg: loadEpg,
+            play: play,
+            isFav: isFav,
+            toggleFav: toggleFav,
+            close: goBack,
+            makeList: function (ul, h, render) { return new VList(ul, h, render); }
+        });
+
+        settingsScreen = new global.SettingsScreen({
+            esc: esc,
+            version: VERSION,
+            accountLabel: function () {
+                var acc = Store.read('account', null);
+                return acc ? acc.username + ' @ ' + acc.server.replace(/^https?:\/\//, '') : 'Account';
+            },
+            openCategoryEditor: function () { showScreen('cated'); catEditor.open(); },
+            refresh: function () { refreshLibrary(); },
+            signOut: signOut,
+            close: goBack
+        });
+
+        catEditor = new global.CategoryEditor({
+            esc: esc,
+            toast: toast,
+            categories: orderedCats,
+            providerOrder: function () { return S.rawCats.slice(); },
+            hidden: function () { return catPrefs().hidden || {}; },
+            count: function (c) { return (S.byCat[c.id] || []).length; },
+            save: function (order, hidden) {
+                Store.write('catPrefs:' + S.accountKey, { order: order, hidden: hidden });
+                rebuildCategories();
+            },
+            close: function () { showScreen('settings'); settingsScreen.open(); }
+        });
 
         $('search-input').addEventListener('input', function () {
             S.searchText = this.value;
@@ -782,6 +1137,7 @@
             updateClock();
             if (S.screen === 'player') renderOsd();
             if (S.screen === 'browse') renderDetails();
+            if (S.screen === 'guide') guide.render();
         }, 30000);
 
         var saved = Store.read('account', null);

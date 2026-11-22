@@ -4,10 +4,12 @@ A live-TV player for Samsung Tizen TVs, including **The Frame**. It signs in to 
 **Xtream Codes** IPTV provider directly from the TV, so no PC or server is needed while you watch.
 
 - **Live channels by category.** Handles providers with tens of thousands of channels (only the rows on screen are drawn).
-- **Program guide.** What's on now and next in every row, the next few shows for the highlighted channel, and a progress bar while watching.
+- **Programme guide.** A classic grid (channels × time) you can scroll through the day, plus now/next in every channel row.
+- **Menu over the video.** Press ◀ while watching to browse categories and channels without leaving full screen.
 - **Favorites and search.** The red button stars a channel; the yellow button searches by name.
+- **Your layout and settings.** Reorder or hide categories; choose buffering, stream format, retries, clock format and more.
 - **TV-native playback.** Uses Samsung's hardware player (AVPlay), with a live preview window in the channel list.
-- **Remote-first.** CH ▲▼ to change channel, the number pad to jump to a channel number, BACK to step out.
+- **Remote-first.** CH ▲▼ to change channel, the number pad to jump to a channel number, colour buttons as shortcuts.
 
 Tested on a 2025 The Frame (QN55LS03F, Tizen 10). Written for Tizen 3.0 and newer (2017+ Samsung TVs).
 
@@ -22,21 +24,40 @@ On first launch, enter your provider's **server URL**, **username** and **passwo
 to move between fields; OK on a field opens the TV keyboard. FrameCast remembers the account and signs in
 automatically from then on.
 
+The colour buttons work everywhere: 🔴 **Red** favorite · 🟢 **Green** guide · 🟡 **Yellow** search ·
+🔵 **Blue** settings. **Guide**, **Search** and **Settings** are also at the top of the side menu.
+
 | Where | Button | Does |
 |---|---|---|
 | Channel list | ▲ ▼ | Move · CH ▲▼ jumps a page |
-| | ◀ ▶ | Switch between categories and channels |
-| | OK | Watch full screen |
-| | 🔴 Red | Add / remove favorite |
-| | 🟡 Yellow | Search |
-| | 🔵 Blue (press twice) | Sign out |
+| | ◀ ▶ | Switch between the side menu and channels |
+| | OK | Watch full screen (or open Guide / Search / Settings from the menu) |
 | | 0–9 | Jump to a channel number |
-| | BACK | Stop the preview → categories → exit (press twice) |
+| | BACK | Stop the preview → side menu → exit (press twice) |
 | Watching | CH ▲▼ or ▲▼ | Next / previous channel in the list you came from |
+| | ◀ | **Open the menu over the video:** browse and switch channels while watching; ▶ or BACK closes it |
 | | OK / INFO | Show the info bar |
-| | 🔴 Red | Add / remove favorite |
 | | 0–9 | Jump to a channel number |
-| | BACK | Back to the list (the channel keeps playing in the preview) |
+| | BACK | Back to the channel list (the channel keeps playing in the preview) |
+| Guide | ◀ ▶ | Move through time (◀ at the earliest time picks a category) |
+| | ▲ ▼ · CH ▲▼ | Move between channels · jump a page |
+| | OK | Watch that channel |
+| | BACK | Close the guide |
+| Settings | ▲ ▼ · ◀ ▶ | Choose a setting · change it |
+| Categories editor | OK · ◀ ▶ | Pick up and move a category · show or hide it |
+
+### Settings
+
+| Setting | Options |
+|---|---|
+| Buffering | Fast start (2 s) · Balanced (4 s) · Fewer stalls (8 s) |
+| Stream format | Automatic · HLS · MPEG-TS |
+| Retry a channel | Off · once · twice · 3 times |
+| When FrameCast opens | Show channel list · Play last channel |
+| Clock | 12-hour · 24-hour |
+| Info bar stays for | 3 / 5 / 8 seconds · Until dismissed |
+| Categories | Reorder & hide (Favorites, All channels and the menu entries stay on top) |
+| Refresh channel list · Sign out | |
 
 If a channel doesn't connect, FrameCast retries it automatically (up to three attempts) before showing an
 error. If it still can't play, it says why, for example *"The channel is not available right now
@@ -161,7 +182,9 @@ app/                 the TV app (this is what gets packaged)
   js/xtream.js       Xtream Codes API client
   js/player.js       AVPlay on the TV; <video> + hls.js in a desktop browser
   js/keys.js         remote control key mapping
-  js/app.js          screens, navigation, guide, favorites, search
+  js/app.js          screens, navigation, menu overlay, favorites, search
+  js/guide.js        programme guide grid
+  js/settings.js     settings, Settings screen, category editor
 dev/server.js        browser test server + mock provider (not shipped)
 install-to-tv.ps1    package + sign + install
 ```
