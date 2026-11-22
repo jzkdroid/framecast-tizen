@@ -1,7 +1,7 @@
 # FrameCast
 
 A live-TV player for Samsung Tizen TVs, including **The Frame**. It signs in to an
-**Xtream Codes** IPTV provider directly from the TV, so no PC or server is needed while you watch.
+**Xtream Codes** IPTV provider directly from the TV, so no PC or server is needed while you watch. I made this for myself using claude to run on my frame TV. I recommend if you want to use it then you should get claude to help you to set it up. Should take about half an hour. Annoying part is getting Samsung app registration to upload to TV. Once that is done it is easy. There's certain remote permissions you can give claude so it does the testing for you.
 
 ![Channel list with live preview and guide](docs/screenshots/channels.jpg)
 
