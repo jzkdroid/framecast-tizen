@@ -167,7 +167,9 @@ install-to-tv.ps1    package + sign + install
 
 - **Content security policy:** without an explicit `tizen:content-security-policy` in `config.xml`, Tizen 10
   applies `object-src 'none'`, which blocks the `<object type="application/avplayer">` AVPlay renders into.
-  Channels then sit on "Loading…".
+  Channels then sit on "Loading…". The policy allows `object-src 'self'` but keeps scripts and styles to the
+  app package only (no inline code), so provider-supplied text can't execute. Keep it that way: don't add
+  inline `<script>`/`<style>` or `style="…"` attributes.
 - **Redirected streams:** many Xtream panels redirect stream URLs to a CDN. AVPlay fails to follow these
   (`PLAYER_ERROR_CONNECTION_FAILED`), so `player.js` resolves the redirect with an XHR first and hands
   AVPlay the final URL. HLS (`.m3u8`) is preferred over MPEG-TS for the same reason.

@@ -12,12 +12,15 @@
     <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
 
-    <!-- IPTV providers live on arbitrary hosts, so allow network access everywhere -->
+    <!-- IPTV providers live on arbitrary hosts, so the app may *fetch* from anywhere.
+         No tizen:allow-navigation: the app never navigates away from its own page. -->
     <access origin="*" subdomains="true"/>
-    <tizen:allow-navigation>*</tizen:allow-navigation>
     <!-- Without an explicit policy, Tizen 10 applies object-src 'none', which blocks the
-         <object type="application/avplayer"> that AVPlay renders into. -->
-    <tizen:content-security-policy>default-src 'self' * data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src *; object-src 'self' *</tizen:content-security-policy>
+         <object type="application/avplayer"> that AVPlay renders into.
+         Code and styles come only from the app package (no inline script or style), so text
+         from the provider (channel names, guide titles) can never run as code. Network data
+         (API, guide, logos, streams) may come from any host. -->
+    <tizen:content-security-policy>default-src 'self'; script-src 'self'; style-src 'self'; img-src * data: blob:; media-src * blob:; connect-src *; object-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'</tizen:content-security-policy>
 
     <tizen:profile name="tv-samsung"/>
     <tizen:setting screen-orientation="landscape" context-menu="disable"

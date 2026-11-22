@@ -18,6 +18,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const PORT = parseInt(process.env.PORT, 10) || 8090;
+const HOST = process.env.HOST || '127.0.0.1';
 const ROOT = path.resolve(__dirname, '..');
 const APP_DIR = path.join(ROOT, 'app');
 const MEDIA_DIR = path.join(__dirname, 'media');
@@ -236,20 +237,32 @@ function sendFile(res, file) {
     });
 }
 
+// Maps a URL path onto a file inside `base`, or null if it would escape `base`
+// (e.g. "../app-backup/x", which a plain startsWith(base) check would let through)
+// or isn't valid percent-encoding.
 function safeJoin(base, rel) {
-    const p = path.normalize(path.join(base, decodeURIComponent(rel)));
-    return p.startsWith(base) ? p : null;
+    let decoded;
+    try { decoded = decodeURIComponent(rel); } catch { return null; }
+    if (decoded.includes('\0')) return null;
+    const root = path.resolve(base);
+    const p = path.resolve(root, decoded);
+    return p === root || p.startsWith(root + path.sep) ? p : null;
 }
 
 ensureMedia();
 
-http.createServer((req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+function forbidden(res) { res.writeHead(403); res.end(); }
+
+function handle(req, res) {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
     const p = url.pathname;
 
     if (p.startsWith('/mock/')) return handleMock(req, res, url);
     if (p === '/proxy') return proxy(req, res, url.searchParams.get('url'));
-    if (p.startsWith('/media/')) return sendFile(res, safeJoin(MEDIA_DIR, p.slice(7)) || '');
+    if (p.startsWith('/media/')) {
+        const media = safeJoin(MEDIA_DIR, p.slice(7));
+        return media ? sendFile(res, media) : forbidden(res);
+    }
     if (p.startsWith('/$WEBAPIS/') || p.startsWith('/%24WEBAPIS/')) { res.writeHead(404); return res.end(); }
 
     if (p === '/' || p === '/index.html') {
@@ -263,9 +276,22 @@ http.createServer((req, res) => {
     }
 
     const file = safeJoin(APP_DIR, p.slice(1));
-    if (!file) { res.writeHead(403); return res.end(); }
+    if (!file) return forbidden(res);
     sendFile(res, file);
-}).listen(PORT, () => {
-    console.log(`[dev] FrameCast: http://localhost:${PORT}`);
+}
+
+http.createServer((req, res) => {
+    try {
+        handle(req, res);
+    } catch (err) {
+        // A malformed request must not take the server down.
+        console.warn('[dev] Bad request:', err.message);
+        if (!res.headersSent) res.writeHead(400);
+        res.end();
+    }
+// Local machine only: /proxy fetches any URL it's given, so it must not be reachable
+// from other devices on the network. Set HOST=0.0.0.0 to override deliberately.
+}).listen(PORT, HOST, () => {
+    console.log(`[dev] FrameCast: http://localhost:${PORT}  (listening on ${HOST} only)`);
     console.log(`[dev] Mock provider: server http://localhost:${PORT}/mock  user demo  pass demo`);
 });
