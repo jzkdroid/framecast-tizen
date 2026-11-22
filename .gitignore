@@ -10,3 +10,12 @@ node_modules/
 .claude/
 .DS_Store
 Thumbs.db
+
+# Samsung signing certificates and Tizen profiles: private, never commit
+*.p12
+*.pfx
+*.pem
+*.key
+profiles.xml
+author.p12
+distributor.p12

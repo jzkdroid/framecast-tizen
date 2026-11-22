@@ -3,6 +3,8 @@
 A live-TV player for Samsung Tizen TVs, including **The Frame**. It signs in to an
 **Xtream Codes** IPTV provider directly from the TV, so no PC or server is needed while you watch.
 
+![Channel list with live preview and guide](docs/screenshots/channels.jpg)
+
 - **Live channels by category.** Handles providers with tens of thousands of channels (only the rows on screen are drawn).
 - **Programme guide.** A classic grid (channels × time) you can scroll through the day, plus now/next in every channel row.
 - **Menu over the video.** Press ◀ while watching to browse categories and channels without leaving full screen.
@@ -15,6 +17,17 @@ Tested on a 2025 The Frame (QN55LS03F, Tizen 10). Written for Tizen 3.0 and newe
 
 > FrameCast is a player only. It doesn't come with channels or subscriptions; you need your own
 > Xtream Codes account (server URL, username and password) from an IPTV provider.
+
+### Screenshots
+
+| | |
+|---|---|
+| ![Programme guide](docs/screenshots/guide.jpg) **Programme guide**: channels × time, scroll through the day | ![Menu over the video](docs/screenshots/overlay.jpg) **Menu over the video**: press ◀ while watching |
+| ![Watching with the info bar](docs/screenshots/watching.jpg) **Watching**: now/next and progress in the info bar | ![Settings](docs/screenshots/settings.jpg) **Settings**: buffering, stream format, retries and more |
+| ![Category editor](docs/screenshots/categories.jpg) **Category editor**: reorder and hide categories | ![Sign in](docs/screenshots/login.jpg) **Sign in**: your provider's Xtream Codes details |
+
+<sub>Screenshots use the built-in demo provider (`dev/server.js`): the channels, programmes and test-pattern
+video are made up.</sub>
 
 ---
 
@@ -220,6 +233,30 @@ install-to-tv.ps1    package + sign + install
 
 To debug on a TV: `C:\tizen-studio\tools\sdb.exe shell 0 debug FrmCastTV1.FrameCast` prints a port; forward
 it with `sdb forward tcp:9222 tcp:<port>` and open `http://localhost:9222` in Chrome.
+
+## Privacy and security
+
+- **Your login stays on your TV.** The server URL, username and password are stored in FrameCast's own
+  storage on the TV and sent only to the provider you entered. FrameCast has no analytics, no tracking and
+  no servers of its own.
+- **Xtream Codes puts your login in every request and stream address.** That's how the protocol works.
+  If your provider's URL starts with `http://` rather than `https://`, your login travels unencrypted on
+  the network. Prefer an `https://` URL if your provider offers one.
+- **Signing out** (Settings → Account) removes the saved login from the TV. Favorites are kept.
+- **Developer Mode** lets the PC whose IP you entered install apps on the TV. Point it only at your own PC.
+- **Keep your Samsung certificate files private.** They're the `.p12` files and backup Certificate Manager
+  created. Never commit them to a repository.
+- **Asking for help:** don't post your provider URL, username or password in issues or chats. Remove them
+  from logs and screenshots first.
+- **Found a security problem?** Please open an issue without exploit details, or contact the maintainer
+  through GitHub first.
+
+## Disclaimer
+
+FrameCast is an independent project. It is not affiliated with, endorsed by, or sponsored by Samsung;
+"Samsung", "Tizen" and "The Frame" are trademarks of their owners. FrameCast doesn't provide, host or link to
+any content. Use it only with services you're legally entitled to access. Installing apps in Developer Mode
+is done at your own risk.
 
 ## License
 
