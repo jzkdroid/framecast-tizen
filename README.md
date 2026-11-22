@@ -75,6 +75,19 @@ after that, reinstalling or updating is one command.
 
 You need a **Windows PC** on the same network as the TV, and a **Samsung account**.
 
+> **Tip: get Claude to help.** Setup involves a few command-line steps and some TV-model quirks. An AI
+> assistant like [Claude](https://claude.ai) can walk you through it, explain error messages, and adapt the
+> steps to your TV. With [Claude Code](https://claude.com/claude-code) on your PC it can also run the PC-side
+> commands for you, such as installing the SDK, connecting to the TV, packaging and installing. You still
+> press the buttons on the TV and sign in to your Samsung account yourself. FrameCast itself was set up on
+> a 2025 Frame this way.
+>
+> A good way to start: *"Help me install FrameCast on my Samsung TV by following the README at
+> https://github.com/jzkdroid/framecast-tizen. My TV is a [model, from Settings → Support → About This TV]."*
+>
+> Don't paste your IPTV password, Samsung password or certificate passwords into a chat. If you're
+> sharing an error message, check it doesn't include them first.
+
 ### 1. Download FrameCast
 
 Click **Code → Download ZIP** on this page and extract it (or `git clone` the repo).
@@ -101,7 +114,8 @@ Samsung's Tizen Studio is now called **Tizen SDK**.
 1. Find your PC's IP address: run `ipconfig` and note the **IPv4 Address** (for example `192.168.1.20`).
 2. On the TV, open **Apps** from the Home bar.
 3. Enter **1 2 3 4 5**. Remotes without number buttons can use the **123** button for an on-screen
-   number pad, the SmartThings phone app's remote, or a USB keyboard.
+   number pad, the SmartThings phone app's remote, or a USB keyboard (on The Frame, plug it into the
+   One Connect box).
    - **If nothing happens (common on 2022+ TVs):** scroll to the bottom of **Apps**, open **App Settings**,
      and enter 1 2 3 4 5 there.
 4. Turn **Developer mode** **On**, enter your PC's IP as **Host PC IP** (no leading zeros), and press OK.
