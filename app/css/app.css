@@ -1,0 +1,280 @@
+/* FrameCast — fixed 1920x1080 TV layout, viewed from across the room. */
+:root {
+    --bg: #0d1016;
+    --panel: #161b24;
+    --panel-2: #1d2430;
+    --line: #2a3342;
+    --text: #e9edf3;
+    --muted: #8d97a8;
+    --accent: #f2b33d;
+    --accent-ink: #1a1305;
+    --fav: #ff5d6c;
+    --ok: #5fd08a;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { background: transparent; }
+
+html, body {
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    color: var(--text);
+    font-family: "SamsungOne", "Segoe UI", Roboto, Arial, sans-serif;
+    font-size: 28px;
+}
+body { background: var(--bg); }
+
+/* On the TV, AVPlay draws on a video plane *behind* the web page, so the page
+   must be see-through wherever video should show. */
+body.playing, body.video-under { background: transparent; }
+
+.hidden { display: none !important; }
+
+/* ---------- Video layers ---------- */
+#av-player, #html-player {
+    position: absolute;
+    left: 0; top: 0;
+    width: 1920px; height: 1080px;
+    background: #000;
+    display: none;
+}
+#av-player.active, #html-player.active { display: block; }
+
+.screen {
+    position: absolute;
+    left: 0; top: 0;
+    width: 1920px; height: 1080px;
+}
+
+/* ---------- Focus ---------- */
+.focused {
+    outline: none;
+    box-shadow: 0 0 0 4px var(--accent);
+}
+
+/* ---------- Login ---------- */
+#login-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at 30% 20%, #1f2a3d 0%, var(--bg) 60%);
+}
+.login-card {
+    width: 860px;
+    padding: 64px 72px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+}
+.brand { font-size: 64px; font-weight: 700; letter-spacing: -1px; }
+.brand span { color: var(--accent); }
+.brand.small { font-size: 40px; }
+.hint { color: var(--muted); margin: 12px 0 36px; }
+.login-card label { display: block; color: var(--muted); font-size: 24px; margin-bottom: 24px; }
+.login-card input {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 18px 22px;
+    font: inherit;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 2px solid var(--line);
+    border-radius: 12px;
+}
+.btn {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 20px;
+    font: inherit;
+    font-weight: 700;
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: none;
+    border-radius: 12px;
+}
+.btn.focused { box-shadow: 0 0 0 4px #fff; }
+.btn:disabled { opacity: 0.6; }
+.error { color: var(--fav); min-height: 36px; margin-top: 20px; }
+
+/* ---------- Browse ---------- */
+.topbar {
+    height: 110px;
+    padding: 0 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.clock { font-size: 36px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.columns {
+    display: flex;
+    gap: 28px;
+    height: 870px;
+    padding: 0 64px;
+}
+.col { display: flex; flex-direction: column; min-width: 0; }
+.col-title {
+    font-size: 24px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    padding: 0 8px 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.categories { width: 420px; }
+.channels { width: 760px; }
+.details { flex: 1; }
+
+.list { list-style: none; flex: 1; overflow: hidden; }
+.list li {
+    height: 72px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 20px;
+    border-radius: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.list li .label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.list li .count { color: var(--muted); font-size: 22px; }
+
+/* the column that has focus shows a filled highlight; the other a quiet marker */
+.list li.selected { background: var(--panel-2); }
+.list.active li.selected { background: var(--accent); color: var(--accent-ink); }
+.list.active li.selected .count,
+.list.active li.selected .now { color: var(--accent-ink); opacity: 0.8; }
+
+.channels .list li { height: 88px; }
+.ch-num { width: 72px; color: var(--muted); font-size: 24px; text-align: right; font-variant-numeric: tabular-nums; }
+.list.active li.selected .ch-num { color: var(--accent-ink); }
+.ch-logo {
+    width: 72px; height: 54px;
+    object-fit: contain;
+    background: #0003;
+    border-radius: 6px;
+    flex: none;
+}
+.ch-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ch-text .label { overflow: hidden; text-overflow: ellipsis; }
+.ch-text .now { font-size: 21px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.fav-mark { color: var(--fav); font-size: 26px; }
+.list.active li.selected .fav-mark { color: #8a0f1c; }
+
+.search-box { padding: 0 0 14px; }
+.search-box input {
+    width: 100%;
+    padding: 16px 22px;
+    font: inherit;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 2px solid var(--line);
+    border-radius: 12px;
+}
+.empty { color: var(--muted); padding: 40px 20px; line-height: 1.5; }
+
+.preview {
+    position: relative;
+    height: 360px;
+    border-radius: 16px;
+    background: #000 linear-gradient(135deg, #1a2130, #0c0f15);
+    border: 1px solid var(--line);
+    overflow: hidden;
+}
+.preview-label {
+    position: absolute;
+    left: 20px; bottom: 16px;
+    font-size: 20px;
+    color: var(--muted);
+}
+/* the video sits underneath the UI; make the box see-through while it plays */
+.preview.live { background: transparent; }
+.preview.live .preview-label { display: none; }
+.detail-name { font-size: 36px; font-weight: 700; margin: 26px 0 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.epg-list { list-style: none; }
+.epg-list li { display: flex; gap: 20px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.epg-list .t { width: 110px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.epg-list .p { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.epg-list li.now .t { color: var(--accent); }
+.epg-list li.now .p { font-weight: 700; }
+.epg-list .note { color: var(--muted); }
+
+.keyhints {
+    height: 100px;
+    padding: 0 64px;
+    display: flex;
+    align-items: center;
+    gap: 48px;
+    color: var(--muted);
+    font-size: 24px;
+}
+.key {
+    display: inline-block;
+    min-width: 30px;
+    height: 30px;
+    padding: 0 8px;
+    margin-right: 8px;
+    vertical-align: -6px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 18px;
+    line-height: 28px;
+    text-align: center;
+    color: var(--text);
+}
+.key.red { background: #e2404f; border-color: #e2404f; }
+.key.yellow { background: #f2c230; border-color: #f2c230; }
+.key.blue { background: #3d7be8; border-color: #3d7be8; }
+.key.ok { color: var(--accent); }
+
+/* ---------- Player OSD ---------- */
+#player-screen { pointer-events: none; }
+.osd {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    padding: 48px 96px 56px;
+    background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.7) 60%, rgba(0,0,0,0) 100%);
+    transition: opacity 0.3s;
+}
+.osd.faded { opacity: 0; }
+.osd-top { display: flex; align-items: center; gap: 28px; }
+.osd-num { font-size: 44px; color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+.osd-logo { height: 72px; max-width: 140px; object-fit: contain; }
+.osd-name { font-size: 48px; font-weight: 700; }
+.osd-fav { color: var(--fav); font-size: 40px; }
+.osd-now { font-size: 34px; margin-top: 18px; }
+.osd-progress { height: 8px; background: #ffffff33; border-radius: 4px; margin: 18px 0; overflow: hidden; }
+#osd-bar { height: 100%; width: 0; background: var(--accent); }
+.osd-next { font-size: 28px; color: #c5ccd8; }
+.osd-hints { font-size: 22px; color: #8d97a8; margin-top: 20px; }
+
+.player-status {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 28px 48px;
+    background: rgba(0,0,0,0.75);
+    border-radius: 16px;
+    font-size: 34px;
+    text-align: center;
+    max-width: 1300px;
+}
+
+.toast {
+    position: absolute;
+    left: 50%; top: 60px;
+    transform: translateX(-50%);
+    padding: 20px 40px;
+    background: rgba(20,24,32,0.95);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    font-size: 28px;
+    z-index: 10;
+}
