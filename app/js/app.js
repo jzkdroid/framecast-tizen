@@ -163,10 +163,15 @@
         connect(account, true);
     }
 
-    function connect(account, fromForm) {
+    // Waits before each automatic retry of sign-in / channel loading. Right after the TV
+    // wakes up its network often isn't connected yet, so the first try commonly fails.
+    var CONNECT_RETRY_DELAYS = [3, 6, 10, 15];
+
+    function connect(account, fromForm, attemptNo) {
+        var attemptIndex = attemptNo || 0;
         var api = new Xtream(account.server, account.username, account.password);
         $('login-btn').disabled = true;
-        $('login-error').textContent = 'Signing in…';
+        $('login-error').textContent = attemptIndex ? 'Signing in (attempt ' + (attemptIndex + 1) + ')…' : 'Signing in…';
         api.login().then(function () {
             $('login-error').textContent = 'Loading channels…';
             return Promise.all([api.liveCategories(), api.liveStreams()]);
@@ -179,8 +184,28 @@
             buildLibrary(res[0], res[1]);
             enterBrowse();
         }).catch(function (err) {
-            showLogin(err.message || 'Sign-in failed', fromForm ? null : account);
+            var wait = CONNECT_RETRY_DELAYS[attemptIndex];
+            if (!err.permanent && wait) {
+                retryCountdown(err.message || 'Could not reach the server', wait, function () {
+                    connect(account, fromForm, attemptIndex + 1);
+                });
+                return;
+            }
+            showLogin((err.message || 'Sign-in failed') +
+                (err.permanent ? '' : '. Check your internet connection, then press Sign in to try again.'),
+                fromForm ? null : account);
         });
+    }
+
+    function retryCountdown(reason, seconds, then) {
+        showScreen('login');
+        $('login-btn').disabled = true;
+        var left = seconds;
+        (function tick() {
+            $('login-error').textContent = reason + '. Trying again in ' + left + ' s…';
+            if (left-- <= 0) { then(); return; }
+            later('connectRetry', 1000, tick);
+        })();
     }
 
     function signOut() {
@@ -487,7 +512,9 @@
     /* ------------------------------------------------------------------ */
 
     function play(ch, list) {
-        var sameChannel = S.playing && S.playing.id === ch.id && Player.isPlaying();
+        // Re-selecting the channel that's already on just goes full screen, unless it failed:
+        // then choosing it again is a retry.
+        var sameChannel = S.playing && S.playing.id === ch.id && Player.isPlaying() && !Player.hasFailed();
         S.playing = ch;
         S.playingList = list && list.length ? list.slice() : [ch];
         Store.write('lastChannel:' + S.accountKey, ch.id);
@@ -551,7 +578,7 @@
             if (text) showStatus(text); else hideStatus();
         },
         onError: function (message) {
-            if (S.screen === 'player') { showStatus(message); showOsd(); }
+            if (S.screen === 'player') { showStatus(message + '\nPress OK to try again.'); showOsd(); }
             else toast(message, 4000);
         }
     });
@@ -703,7 +730,11 @@
         switch (a) {
             case 'up': case 'chup': zap(1); return true;
             case 'down': case 'chdown': zap(-1); return true;
-            case 'ok': case 'info': case 'left': case 'right': showOsd(); return true;
+            case 'ok':
+                if (Player.hasFailed()) { hideStatus(); Player.retry(); showOsd(); return true; }
+                showOsd();
+                return true;
+            case 'info': case 'left': case 'right': showOsd(); return true;
             case 'red': toggleFav(S.playing); showOsd(); return true;
             case 'back': hideStatus(); backToBrowse(); return true;
             case 'stop': hideStatus(); stopPreview(); backToBrowse(); return true;

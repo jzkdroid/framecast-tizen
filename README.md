@@ -38,8 +38,11 @@ automatically from then on.
 | | 0–9 | Jump to a channel number |
 | | BACK | Back to the list (the channel keeps playing in the preview) |
 
-If a channel can't play, FrameCast says why, for example *"The channel is not available right now
-(provider replied 503)"*. Event channels are often offline until the event starts.
+If a channel doesn't connect, FrameCast retries it automatically (up to three attempts) before showing an
+error. If it still can't play, it says why, for example *"The channel is not available right now
+(provider replied 503)"*, and **OK** tries again. Event channels are often offline until the event starts.
+Sign-in and channel loading also retry by themselves, which helps when the TV has just woken up and its
+network isn't connected yet.
 
 ---
 

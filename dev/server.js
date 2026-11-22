@@ -127,6 +127,8 @@ function logoSvg(id) {
 <text x="80" y="76" font-family="Arial" font-size="44" font-weight="700" fill="#fff" text-anchor="middle">${label}</text></svg>`;
 }
 
+const flakyServed = new Set();
+
 function handleMock(req, res, url) {
     const p = url.pathname.replace(/^\/mock/, '');
     const q = url.searchParams;
@@ -167,6 +169,12 @@ function handleMock(req, res, url) {
     if (m) {
         const id = parseInt(m[1], 10);
         if (id % 17 === 0) { res.writeHead(404); return res.end('offline'); }   // some "offline" channels
+        // "Flaky" channels (ids ending in 7) fail their first request with 503, like a CDN
+        // that isn't ready yet, then work; useful for testing the player's automatic retry.
+        if (id % 10 === 7 && m[2] === 'm3u8' && !flakyServed.has(id)) {
+            flakyServed.add(id);
+            res.writeHead(503); return res.end('try again');
+        }
         const playlist = path.join(MEDIA_DIR, 'stream.m3u8');
         if (!fs.existsSync(playlist)) { res.writeHead(503); return res.end('no test media'); }
         if (m[2] === 'ts') return sendFile(res, path.join(MEDIA_DIR, 'seg000.ts'));

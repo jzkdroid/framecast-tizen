@@ -21,7 +21,8 @@
             xhr.timeout = timeoutMs || 60000;
             xhr.onload = function () {
                 if (xhr.status < 200 || xhr.status >= 300) {
-                    reject(new Error('Server replied ' + xhr.status));
+                    // 4xx won't fix itself by retrying (wrong URL, blocked account); 5xx might.
+                    reject(permanentIf(new Error('Server replied ' + xhr.status), xhr.status >= 400 && xhr.status < 500));
                     return;
                 }
                 try {
@@ -34,6 +35,12 @@
             xhr.ontimeout = function () { reject(new Error('The server took too long to answer')); };
             xhr.send();
         });
+    }
+
+    /** Marks errors that retrying can't fix, so callers don't retry them. */
+    function permanentIf(err, yes) {
+        if (yes) err.permanent = true;
+        return err;
     }
 
     function normalizeServer(server) {
@@ -83,15 +90,15 @@
     /** Resolves with the account info, or rejects with a readable message. */
     Xtream.prototype.login = function () {
         var self = this;
-        if (!self.server) return Promise.reject(new Error('Enter your server URL'));
-        if (!self.username) return Promise.reject(new Error('Enter your username'));
+        if (!self.server) return Promise.reject(permanentIf(new Error('Enter your server URL'), true));
+        if (!self.username) return Promise.reject(permanentIf(new Error('Enter your username'), true));
         return self.call(null, null, 20000).then(function (data) {
             var info = data && data.user_info;
             if (!info || String(info.auth) !== '1') {
-                throw new Error('Wrong username or password');
+                throw permanentIf(new Error('Wrong username or password'), true);
             }
             if (info.status && info.status !== 'Active') {
-                throw new Error('Account status: ' + info.status);
+                throw permanentIf(new Error('Account status: ' + info.status), true);
             }
             var formats = info.allowed_output_formats || [];
             // Prefer HLS: on Tizen 10 AVPlay failed to connect to redirected MPEG-TS streams

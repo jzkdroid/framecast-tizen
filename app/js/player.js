@@ -18,8 +18,12 @@
     var hls = null;
     var playToken = 0;     // ignores callbacks from a stream we already left
 
-    var START_TIMEOUT_MS = 15000;
+    var START_TIMEOUT_MS = 12000;   // per attempt
+    var MAX_RETRIES = 2;            // so up to 3 attempts in total
+    var RETRY_DELAY_MS = 2000;
     var watchdog = null;
+    var retryTimer = null;
+    var attempt = 0;
     var failedToken = -1;  // once a stream has failed, its late "Loading…" events must not hide the error
 
     function status(text) {
@@ -28,19 +32,45 @@
         if (!text) clearTimeout(watchdog);
         if (listener && listener.onStatus) listener.onStatus(text);
     }
-    function fail(message) {
+
+    /*
+     * A failed attempt. Temporary problems (no connection, timeouts, server errors) are
+     * retried a couple of times before the error is shown; `permanent` ones (channel refused
+     * or missing, unsupported video) are shown straight away.
+     */
+    function fail(message, permanent) {
         clearTimeout(watchdog);
         if (failedToken === playToken) return;
+        if (!permanent && attempt < MAX_RETRIES && currentUrl) {
+            attempt++;
+            failedToken = playToken;   // ignore the rest of this attempt's events
+            if (listener && listener.onStatus) {
+                listener.onStatus('Couldn\'t connect. Trying again (' + (attempt + 1) + ' of ' + (MAX_RETRIES + 1) + ')…');
+            }
+            var url = currentUrl;
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(function () { if (currentUrl === url) startAttempt(); }, RETRY_DELAY_MS);
+            return;
+        }
         failedToken = playToken;
-        if (listener && listener.onError) listener.onError(message);
+        if (listener && listener.onError) {
+            listener.onError(message + (attempt > 0 ? ' (tried ' + (attempt + 1) + ' times)' : ''));
+        }
     }
 
-    // Dead channels often never error out (endless retries); give up after a while.
+    // Dead channels often never error out (endless retries inside the player); give up after a while.
     function armWatchdog(token) {
         clearTimeout(watchdog);
         watchdog = setTimeout(function () {
             if (token === playToken) fail('This channel isn\'t responding. It may be offline; try another channel.');
         }, START_TIMEOUT_MS);
+    }
+
+    function startAttempt() {
+        playToken++;
+        armWatchdog(playToken);
+        if (avplay) avplayPlay(currentUrl, playToken);
+        else htmlPlay(currentUrl, playToken);
     }
 
     function placeElement(el, r) {
@@ -99,8 +129,10 @@
         resolveRedirect(url, function (finalUrl, httpStatus) {
             if (token !== playToken) return;
             if (httpStatus >= 400) {
-                // The provider already said no (e.g. 503 for an event channel that isn't live).
-                fail('The channel is not available right now (provider replied ' + httpStatus + ').');
+                // The provider already said no. 4xx (refused, not found) won't change by retrying;
+                // 5xx (e.g. 503 for an event channel that isn't live yet) might.
+                fail('The channel is not available right now (provider replied ' + httpStatus + ').',
+                    httpStatus < 500);
                 return;
             }
             avplayOpen(finalUrl, token);
@@ -118,7 +150,7 @@
                     if (token === playToken) fail('The stream ended.');
                 },
                 onerror: function (type) {
-                    if (token === playToken) fail(describeAvplayError(type));
+                    if (token === playToken) fail(describeAvplayError(type), isPermanentAvplayError(type));
                 },
                 oncurrentplaytime: function () {},
                 onevent: function () {}
@@ -138,11 +170,17 @@
                     fail('Could not start playback.');
                 }
             }, function (err) {
-                if (token === playToken) fail(describeAvplayError(err && (err.name || err.message)));
+                var type = err && (err.message || err.name);
+                if (token === playToken) fail(describeAvplayError(type), isPermanentAvplayError(type));
             });
         } catch (e) {
-            fail(describeAvplayError(e && (e.name || e.message)));
+            var type = e && (e.message || e.name);
+            fail(describeAvplayError(type), isPermanentAvplayError(type));
         }
+    }
+
+    function isPermanentAvplayError(type) {
+        return /UNSUPPORTED|CODEC|FORMAT|INVALID_URI|NOT_FOUND|404|403|DRM/i.test(String(type || ''));
     }
 
     function describeAvplayError(type) {
@@ -192,14 +230,22 @@
             }
         }
         if (global.Hls && global.Hls.isSupported()) {
-            hls = new global.Hls({ lowLatencyMode: false });
+            // No hls.js-internal playlist retries: retrying is done above (fail → startAttempt),
+            // the same way as on the TV, so the browser behaves like the real thing.
+            hls = new global.Hls({
+                lowLatencyMode: false,
+                manifestLoadPolicy: {
+                    default: { maxTimeToFirstByteMs: 10000, maxLoadTimeMs: 20000, timeoutRetry: null, errorRetry: null }
+                }
+            });
             hls.on(global.Hls.Events.MANIFEST_PARSED, start);
             hls.on(global.Hls.Events.ERROR, function (e, data) {
                 if (!data || !data.fatal || token !== playToken) return;
                 var code = data.response && data.response.code;
-                fail(code === 404 || code === 403 || /manifestLoad/.test(data.details)
+                var missing = code === 404 || code === 403 || code === 401;
+                fail(missing || /manifestLoad/.test(data.details)
                     ? 'The channel is not available right now.'
-                    : 'Playback failed (' + data.details + '). The channel may be offline.');
+                    : 'Playback failed (' + data.details + '). The channel may be offline.', missing);
             });
             hls.loadSource(src);
             hls.attachMedia(htmlEl);
@@ -217,16 +263,27 @@
         setListener: function (l) { listener = l; },
 
         play: function (url) {
-            playToken++;
+            clearTimeout(retryTimer);
             currentUrl = url;
-            armWatchdog(playToken);
-            if (avplay) avplayPlay(url, playToken);
-            else htmlPlay(url, playToken);
+            attempt = 0;
+            startAttempt();
         },
+
+        /** Try the current channel again from scratch (after its error was shown). */
+        retry: function () {
+            if (!currentUrl) return;
+            clearTimeout(retryTimer);
+            attempt = 0;
+            startAttempt();
+        },
+
+        /** True when the current channel gave up and is showing an error. */
+        hasFailed: function () { return !!currentUrl && failedToken === playToken; },
 
         stop: function () {
             playToken++;
             clearTimeout(watchdog);
+            clearTimeout(retryTimer);
             currentUrl = null;
             if (avplay) { avplayStop(); avEl.classList.remove('active'); }
             else htmlStop();
@@ -257,7 +314,7 @@
             if (!currentUrl) return;
             if (avplay) {
                 try { avplay.restore(); }
-                catch (e) { avplayPlay(currentUrl, ++playToken); }
+                catch (e) { attempt = 0; startAttempt(); }
             } else {
                 quietPlay();
             }
