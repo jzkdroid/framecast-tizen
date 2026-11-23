@@ -43,12 +43,12 @@ The colour buttons work everywhere: 🔴 **Red** favorite · 🟢 **Green** guid
 | Where | Button | Does |
 |---|---|---|
 | Channel list | ▲ ▼ | Move · CH ▲▼ jumps a page |
-| | ◀ ▶ | Switch between the side menu and channels |
+| | ◀ ▶ | Switch between the side menu and channels · ◀ in the side menu jumps back to the top |
 | | OK | Watch full screen (or open Guide / Search / Settings from the menu) |
 | | 0–9 | Jump to a channel number |
 | | BACK | Stop the preview → side menu → exit (press twice) |
 | Watching | CH ▲▼ or ▲▼ | Next / previous channel in the list you came from |
-| | ◀ | **Open the menu over the video:** browse and switch channels while watching; ▶ or BACK closes it |
+| | ◀ | **Open the menu over the video:** browse and switch channels while watching (◀ again moves to the side menu, and once more jumps to its top); ▶ or BACK closes it |
 | | OK / INFO | Show the info bar |
 | | 0–9 | Jump to a channel number |
 | | BACK | Back to the channel list (the channel keeps playing in the preview) |

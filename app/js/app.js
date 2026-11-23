@@ -1033,6 +1033,8 @@
                     if (ovChanList.items.length) setOvZone('chan');
                     return true;
                 case 'left':
+                    // Leftmost column: ◀ jumps back to the top (Guide), nothing if already there.
+                    if (ovCatList.move(-ovCatList.sel)) { clearTimeout(timers.ovCat); loadOverlayChannels(0); }
                     return true;
             }
             return true;
@@ -1184,6 +1186,10 @@
                     return true;
                 case 'chup': case 'chdown':
                     if (catList.move(a === 'chup' ? -catList.visibleCount() : catList.visibleCount())) loadChannels();
+                    return true;
+                case 'left':
+                    // Leftmost column: ◀ jumps back to the top (Guide), nothing if already there.
+                    if (catList.move(-catList.sel)) { clearTimeout(timers.catLoad); loadChannels(); }
                     return true;
                 case 'right': case 'ok': {
                     clearTimeout(timers.catLoad);
