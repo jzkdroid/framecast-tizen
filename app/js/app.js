@@ -220,71 +220,219 @@
         connect(account, true);
     }
 
-    // Waits before each automatic retry of sign-in / channel loading. Right after the TV
-    // wakes up its network often isn't connected yet, so the first try commonly fails.
-    var CONNECT_RETRY_DELAYS = [3, 6, 10, 15];
-    var firstEntry = true;
+    /*
+     * Startup is built so the channel list never waits on the network:
+     *  1. The last channel list is saved on the TV (IndexedDB) after every successful load.
+     *  2. On launch the saved list is shown at once, and sign-in + a fresh list load run in
+     *     the background; the screen only updates if the list actually changed.
+     *  3. If the network isn't up yet (common right after the TV wakes from standby), retries
+     *     come quickly, and immediately when the TV reports it's back online.
+     */
+    var BigStore = global.BigStore;
 
-    function connect(account, fromForm, attemptNo) {
+    // Seconds between retries of sign-in / channel loading.
+    var RETRY_DELAYS = [1, 2, 3, 5, 8, 13, 20, 30];
+    var firstEntry = true;
+    var connectGen = 0;          // newer connect() calls cancel older ones
+    var pendingRetry = null;     // function to run now if the network comes back
+
+    // Startup timings (seconds since the page started), kept for the last few launches so slow
+    // starts can be diagnosed afterwards: FrameCast.timings() in the dev tools console.
+    var timings = {};
+    function mark(name) {
+        if (timings[name] === undefined) timings[name] = Math.round((global.performance ? performance.now() : 0) / 10) / 100;
+    }
+    function saveTimings() {
+        if (!timings.browse) return;
+        if (global.performance) timings.pageStart = Math.round(Date.now() - performance.now());
+        var runs = Store.read('startupTimings', []);
+        runs.unshift(timings);
+        Store.write('startupTimings', runs.slice(0, 5));
+        timings = {};
+    }
+
+    function libraryKey(account) {
+        return 'library:' + Xtream.normalizeServer(account.server) + '|' + String(account.username || '').trim();
+    }
+
+    /** Cheap fingerprint of a channel list, to tell whether a refresh changed anything. */
+    function librarySignature(cats, chans) {
+        var h = 0, s = cats.length + ':' + chans.length;
+        for (var i = 0; i < chans.length; i++) {
+            var c = chans[i], k = c.id + c.name + c.cat + c.num + c.logo;
+            for (var j = 0; j < k.length; j++) h = (h * 31 + k.charCodeAt(j)) | 0;
+        }
+        for (var m = 0; m < cats.length; m++) s += '|' + cats[m].id + cats[m].name;
+        return s + '#' + h;
+    }
+
+    /** Make `api` the active account and show its channels. */
+    function adoptLibrary(account, api, cats, chans) {
+        S.api = api;
+        S.accountKey = api.server + '|' + api.username;
+        S.favs = Store.read('favs:' + S.accountKey, []);
+        S.lastSel = Store.read('lastSel:' + S.accountKey, {});
+        buildLibrary(cats, chans);
+        S.librarySig = librarySignature(cats, chans);
+        mark('library');
+        enterBrowse();
+        mark('browse');
+    }
+
+    /** Launch with a saved account: show the saved channel list immediately if there is one. */
+    function startSaved(account) {
+        showLogin('', account);
+        $('login-btn').disabled = true;
+        $('login-error').textContent = 'Loading…';
+        BigStore.get(libraryKey(account)).then(function (saved) {
+            mark('cache');
+            if (saved && saved.chans && saved.chans.length) {
+                var api = new Xtream(account.server, account.username, account.password);
+                api.autoFormat = saved.format || 'm3u8';
+                applyFormat(api);
+                adoptLibrary(account, api, saved.cats || [], saved.chans);
+                setSync('Updating channels…');
+                connect(account, false, 0, true);
+            } else {
+                connect(account, false, 0, false);
+            }
+        });
+    }
+
+    /*
+     * Sign in and load the channel list.
+     * background = true: the saved list is already on screen; just refresh it quietly.
+     */
+    function connect(account, fromForm, attemptNo, background) {
+        var gen = ++connectGen;
         var attemptIndex = attemptNo || 0;
         var api = new Xtream(account.server, account.username, account.password);
-        $('login-btn').disabled = true;
-        $('login-error').textContent = attemptIndex ? 'Signing in (attempt ' + (attemptIndex + 1) + ')…' : 'Signing in…';
+        if (!background) {
+            $('login-btn').disabled = true;
+            $('login-error').textContent = attemptIndex ? 'Signing in (attempt ' + (attemptIndex + 1) + ')…' : 'Signing in…';
+        }
         var cats = null;
+        mark('connect');
         api.login().then(function () {
-            $('login-error').textContent = 'Loading channels…';
+            mark('login');
+            if (!background) $('login-error').textContent = 'Loading channels…';
             // One request at a time: some providers limit simultaneous connections and answer
             // the extra request with an empty list.
             return api.liveCategories();
         }).then(function (c) {
+            mark('categories');
             cats = c;
             return api.liveStreams();
         }).then(function (chans) {
+            mark('channels');
             if (!chans.length) {
                 // A signed-in account with no channels is almost always a temporary provider
                 // hiccup (rate limiting, busy server), so treat it like a failed request and retry.
                 throw new Error('The provider sent an empty channel list');
             }
-            return [cats, chans];
-        }).then(function (res) {
+            if (gen !== connectGen) return;
+            pendingRetry = null;
             Store.write('account', account);
             applyFormat(api);
-            S.api = api;
-            S.accountKey = api.server + '|' + api.username;
-            S.favs = Store.read('favs:' + S.accountKey, []);
-            S.lastSel = Store.read('lastSel:' + S.accountKey, {});
-            buildLibrary(res[0], res[1]);
-            enterBrowse();
+            BigStore.put(libraryKey(account), { savedAt: Date.now(), format: api.autoFormat, cats: cats, chans: chans });
+            if (background && S.api) {
+                S.api = api;                       // fresh login (format may have changed)
+                var sig = librarySignature(cats, chans);
+                if (sig !== S.librarySig) {
+                    buildLibrary(cats, chans);
+                    S.librarySig = sig;
+                    libraryChanged();
+                }
+                setSync(null);
+            } else {
+                adoptLibrary(account, api, cats, chans);
+            }
+            saveTimings();
         }).catch(function (err) {
-            var wait = CONNECT_RETRY_DELAYS[attemptIndex];
-            if (!err.permanent && wait) {
-                retryCountdown(err.message || 'Could not reach the server', wait, function () {
-                    connect(account, fromForm, attemptIndex + 1);
-                });
+            if (gen !== connectGen) return;
+            var wait = RETRY_DELAYS[Math.min(attemptIndex, RETRY_DELAYS.length - 1)];
+            if (err.permanent) {
+                // Wrong password, account expired… The saved list can't be trusted any more.
+                setSync(null);
+                if (background) { BigStore.remove(libraryKey(account)); Player.stop(); S.playing = null; setPreviewLive(false); }
+                showLogin(err.message || 'Sign-in failed', fromForm ? null : account);
                 return;
             }
-            showLogin((err.message || 'Sign-in failed') +
-                (err.permanent ? '' : '. Check your internet connection, then press Sign in to try again.'),
-                fromForm ? null : account);
+            var retry = function () { connect(account, fromForm, attemptIndex + 1, background); };
+            if (background) {
+                // Keep using the saved list; refresh quietly when the network is back.
+                setSync('Offline · showing saved channels');
+                scheduleRetry(retry, wait, null);
+            } else if (attemptIndex < 12) {
+                scheduleRetry(retry, wait, err.message || 'Could not reach the server');
+            } else {
+                showLogin((err.message || 'Sign-in failed') + '. Check your internet connection, then press Sign in to try again.',
+                    fromForm ? null : account);
+            }
         });
     }
 
-    function retryCountdown(reason, seconds, then) {
-        showScreen('login');
-        $('login-btn').disabled = true;
+    /** Retry after `seconds`, or straight away if the TV reports the network is back. */
+    function scheduleRetry(fn, seconds, reasonForCountdown) {
+        pendingRetry = fn;
         var left = seconds;
+        if (reasonForCountdown) { showScreen('login'); $('login-btn').disabled = true; }
         (function tick() {
-            $('login-error').textContent = reason + '. Trying again in ' + left + ' s…';
-            if (left-- <= 0) { then(); return; }
+            if (pendingRetry !== fn) return;
+            if (reasonForCountdown) $('login-error').textContent = reasonForCountdown + '. Trying again in ' + left + ' s…';
+            if (left-- <= 0) { pendingRetry = null; fn(); return; }
             later('connectRetry', 1000, tick);
         })();
     }
 
+    function retryNow() {
+        var fn = pendingRetry;
+        if (!fn) return;
+        pendingRetry = null;
+        clearTimeout(timers.connectRetry);
+        fn();
+    }
+
+    /** Small status text in the channel list's top bar ("Updating channels…", "Offline…"). */
+    function setSync(text) {
+        var el = $('sync-status');
+        el.textContent = text || '';
+        el.classList.toggle('hidden', !text);
+    }
+
+    /** The background refresh brought a different channel list: update whatever is on screen. */
+    function libraryChanged() {
+        var byId = {};
+        S.channels.forEach(function (c) { byId[c.id] = c; });
+        if (S.playing) {
+            S.playing = byId[S.playing.id] || S.playing;
+            var list = findCat(S.playingCatId) ? channelsFor(S.playingCatId) : S.channels;
+            S.playingList = list.length ? list : S.channels;
+        }
+        if (S.screen === 'browse') {
+            var curId = currentCat() ? currentCat().id : 'all';
+            var chId = chanList.current() && chanList.current().id;
+            var idx = catIndex(curId);
+            catList.setItems(S.categories, idx === -1 ? catIndex('all') : idx);
+            var items = channelsFor(currentCat().id), sel = 0;
+            items.forEach(function (c, i) { if (c.id === chId) sel = i; });
+            if (S.zone !== 'search') loadChannels(sel);
+        }
+        if (S.overlay) openOverlay();
+        if (S.screen === 'guide') guide.refresh();
+        toast('Channel list updated');
+    }
+
     function signOut() {
+        var account = Store.read('account', null);
+        connectGen++;                 // cancel any background refresh
+        pendingRetry = null;
+        setSync(null);
         Player.stop();
         S.playing = null;
         setPreviewLive(false);
         Store.remove('account');
+        if (account) BigStore.remove(libraryKey(account));   // the saved channel list goes too
         S.api = null;
         S.channels = [];
         S.epg = {};
@@ -296,9 +444,10 @@
     function refreshLibrary() {
         var account = Store.read('account', null);
         if (!account) return;
-        toast('Reloading channels…');
         S.epg = {};
-        connect(account, false);
+        goBack();                     // back to the channels; the list updates in place
+        setSync('Updating channels…');
+        connect(account, false, 0, true);
     }
 
     /* ------------------------------------------------------------------ */
@@ -1065,6 +1214,7 @@
     /* ------------------------------------------------------------------ */
 
     function init() {
+        mark('script');
         Keys.register();
         applyPlayerSettings();
 
@@ -1129,9 +1279,25 @@
         });
         $('login-btn').addEventListener('click', submitLogin);
 
+        var hiddenAt = 0;
         document.addEventListener('visibilitychange', function () {
-            if (document.hidden) Player.suspend(); else Player.resume();
+            if (document.hidden) {
+                hiddenAt = Date.now();
+                Player.suspend();
+                return;
+            }
+            Player.resume();
+            // Back after a long time in the background: the guide is stale and the channel list
+            // may have changed, so refresh both quietly.
+            if (hiddenAt && Date.now() - hiddenAt > 30 * 60 * 1000 && S.api) {
+                var account = Store.read('account', null);
+                S.epg = {};
+                if (account) { setSync('Updating channels…'); connect(account, false, 0, true); }
+            }
         });
+
+        // The TV says the network is back (e.g. Wi-Fi reconnected after standby): retry right away.
+        global.addEventListener('online', retryNow);
 
         setInterval(function () {
             updateClock();
@@ -1142,8 +1308,7 @@
 
         var saved = Store.read('account', null);
         if (saved && saved.server && saved.username) {
-            showLogin('', saved);
-            connect(saved, false);
+            startSaved(saved);
         } else {
             showLogin('', null);
         }
@@ -1152,5 +1317,5 @@
     init();
 
     // Exposed for debugging from the dev tools console.
-    global.FrameCast = { state: S };
+    global.FrameCast = { state: S, timings: function () { return Store.read('startupTimings', []); } };
 })(window);

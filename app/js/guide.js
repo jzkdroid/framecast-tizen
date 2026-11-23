@@ -305,5 +305,14 @@
         if (visible.indexOf(ch) !== -1) this.render();
     };
 
+    /** The channel list was reloaded: rebuild the rows, staying on the same channel. */
+    Guide.prototype.refresh = function () {
+        var cur = this.chans[this.row];
+        var top = this.top;
+        this.setCategory(this.catId, cur && cur.id);
+        this.top = top;
+        if (!this.picking) this.render();
+    };
+
     global.Guide = Guide;
 })(window);

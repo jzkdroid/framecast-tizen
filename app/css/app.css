@@ -398,3 +398,9 @@ body.playing, body.video-under { background: transparent; }
 
 /* Full screens that sit over a playing channel need their own background */
 #guide-screen, #settings-screen, #cated-screen { background: var(--bg); }
+
+/* "Updating channels…" / "Offline · showing saved channels" next to the clock */
+.sync-status {
+    flex: 1; text-align: right; padding-right: 40px;
+    font-size: 26px; color: var(--muted);
+}
