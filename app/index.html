@@ -152,6 +152,15 @@
             <div class="osd-hints">CH ▲▼ change channel · ◀ menu · OK / INFO show this · GREEN guide · BACK channel list</div>
         </div>
         <div id="player-status" class="player-status hidden"></div>
+        <!-- Suggests a bigger buffer when the picture keeps pausing -->
+        <div id="buffer-prompt" class="prompt hidden">
+            <div class="prompt-title">The picture keeps buffering</div>
+            <div id="buffer-prompt-text" class="prompt-text"></div>
+            <div class="prompt-keys">
+                <span><b class="key ok">OK</b> Switch now</span>
+                <span><b class="key">BACK</b> Not now</span>
+            </div>
+        </div>
         <!-- Menu over the video (◀ while watching) -->
         <div id="overlay" class="overlay hidden">
             <div class="overlay-col">

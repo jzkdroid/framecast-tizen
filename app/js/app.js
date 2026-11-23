@@ -183,6 +183,15 @@
 
     Settings.onChange(function (key) {
         if (key === 'buffer' || key === 'retries') applyPlayerSettings();
+        // A new buffer size only takes effect when a stream starts, so restart the channel
+        // that's on now (from the buffering prompt, or Settings opened while watching).
+        // Debounced, so flicking through the options in Settings restarts it only once.
+        if (key === 'buffer' && S.playing && Player.isPlaying() && !Player.hasFailed()) {
+            S.stalls = [];
+            later('bufferRestart', S.screen === 'settings' ? 1500 : 0, function () {
+                if (S.playing && Player.isPlaying()) Player.retry();
+            });
+        }
         if (key === 'format') applyFormat(S.api);
         if (key === 'clock') updateClock();
     });
@@ -891,8 +900,65 @@
         onError: function (message) {
             if (S.screen === 'player') { showStatus(message + '\nPress OK to try again.'); if (!S.overlay) showOsd(); }
             else toast(message, 4000);
-        }
+        },
+        onStall: onStall
     });
+
+    /* ------------------------------------------------------------------ */
+    /* Buffering suggestion: the picture keeps pausing mid-programme       */
+    /* ------------------------------------------------------------------ */
+
+    var STALL_WINDOW_MS = 3 * 60 * 1000;     // 2 stalls within 3 minutes…
+    var STALLS_TO_SUGGEST = 2;
+    var PROMPT_SNOOZE_MS = 30 * 60 * 1000;   // …and don't ask again for 30 minutes after "Not now"
+    var NEXT_BUFFER = { fast: 'balanced', balanced: 'stable' };
+    S.stalls = [];
+    S.bufferPrompt = null;                   // the buffer setting being offered, while the prompt is up
+    var promptSnoozedAt = 0, maxedHintShown = false;
+
+    function onStall() {
+        var now = Date.now();
+        S.stalls = S.stalls.filter(function (t) { return now - t < STALL_WINDOW_MS; });
+        S.stalls.push(now);
+        if (S.stalls.length < STALLS_TO_SUGGEST || S.bufferPrompt) return;
+        if (now - promptSnoozedAt < PROMPT_SNOOZE_MS) return;
+
+        var next = NEXT_BUFFER[Settings.get('buffer')];
+        if (!next) {
+            // Already on the biggest buffer: more buffering won't help, so say what will.
+            if (!maxedHintShown) {
+                maxedHintShown = true;
+                toast('Still buffering with the largest buffer: the channel or your connection may be struggling. Try another channel.', 6000);
+            }
+            return;
+        }
+        showBufferPrompt(next);
+    }
+
+    function showBufferPrompt(next) {
+        if (S.screen !== 'player' || S.overlay) return;
+        S.bufferPrompt = next;
+        var label = Settings.optionLabel('buffer', next), secs = Settings.buffer(next).play;
+        $('buffer-prompt-text').textContent = 'Switch Buffering to "' + label + '" (' + secs + ' s)? ' +
+            'Channels take a little longer to start, but play more smoothly. You can change this any time in Settings.';
+        $('buffer-prompt').classList.remove('hidden');
+        later('bufferPrompt', 20000, function () { closeBufferPrompt(false); });
+    }
+
+    function closeBufferPrompt(accepted) {
+        var next = S.bufferPrompt;
+        if (!next) return;
+        S.bufferPrompt = null;
+        clearTimeout(timers.bufferPrompt);
+        $('buffer-prompt').classList.add('hidden');
+        if (accepted) {
+            Settings.set('buffer', next);           // restarts the channel with the bigger buffer
+            toast('Buffering set to "' + Settings.valueLabel('buffer') + '". Restarting the channel…', 3500);
+        } else {
+            promptSnoozedAt = Date.now();
+        }
+        S.stalls = [];
+    }
 
     /* ------------------------------------------------------------------ */
     /* Menu overlay over the video (◀ while watching)                      */
@@ -1171,6 +1237,11 @@
     function channelsCatId() { return loadedCatId; }
 
     function onPlayerKey(a) {
+        if (S.bufferPrompt) {
+            if (a === 'ok') { closeBufferPrompt(true); return true; }
+            if (a === 'back') { closeBufferPrompt(false); return true; }
+            closeBufferPrompt(false);   // any other key: carry on with it, and don't ask again for a while
+        }
         if (S.overlay) return onOverlayKey(a);
         if (/^\d$/.test(a)) { typeDigit(a); return true; }
         switch (a) {

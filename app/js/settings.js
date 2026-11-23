@@ -101,7 +101,13 @@
         step: step,
         valueLabel: valueLabel,
         helpFor: helpFor,
-        buffer: function () { var b = BUFFERS[get('buffer')]; return { play: b[0], resume: b[1] }; },
+        buffer: function (value) { var b = BUFFERS[value || get('buffer')]; return { play: b[0], resume: b[1] }; },
+        /** Label of any option of a setting, without changing the setting. */
+        optionLabel: function (key, value) {
+            var d = def(key);
+            for (var i = 0; d && i < d.options.length; i++) if (d.options[i][0] === value) return d.options[i][1];
+            return String(value);
+        },
         onChange: function (fn) { listeners.push(fn); }
     };
 

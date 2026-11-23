@@ -63,7 +63,7 @@ The colour buttons work everywhere: 🔴 **Red** favorite · 🟢 **Green** guid
 
 | Setting | Options |
 |---|---|
-| Buffering | Fast start (2 s) · Balanced (4 s) · Fewer stalls (8 s) |
+| Buffering | Fast start (2 s) · Balanced (4 s) · Fewer stalls (8 s). Applies straight away to the channel you're watching |
 | Stream format | Automatic · HLS · MPEG-TS |
 | Retry a channel | Off · once · twice · 3 times |
 | When FrameCast opens | Show channel list · Play last channel |
@@ -71,6 +71,10 @@ The colour buttons work everywhere: 🔴 **Red** favorite · 🟢 **Green** guid
 | Info bar stays for | 3 / 5 / 8 seconds · Until dismissed |
 | Categories | Reorder & hide (Favorites, All channels and the menu entries stay on top) |
 | Refresh channel list · Sign out | |
+
+If the picture keeps pausing to buffer (twice within a few minutes), FrameCast offers to switch to a bigger
+buffer: **OK** switches and restarts the channel, **BACK** says not now and it won't ask again for 30 minutes.
+On the biggest buffer it tells you the channel or connection is the likely problem instead.
 
 If a channel doesn't connect, FrameCast retries it automatically (up to three attempts) before showing an
 error. If it still can't play, it says why, for example *"The channel is not available right now

@@ -28,12 +28,28 @@
     var retryTimer = null;
     var attempt = 0;
     var failedToken = -1;  // once a stream has failed, its late "Loading…" events must not hide the error
+    var startedToken = -1; // the attempt whose picture has started moving
 
     function status(text) {
         if (failedToken === playToken) return;
         // Any "not loading" status means the picture is moving: stop the start-up watchdog.
-        if (!text) clearTimeout(watchdog);
+        if (!text) { clearTimeout(watchdog); startedToken = playToken; }
         if (listener && listener.onStatus) listener.onStatus(text);
+    }
+
+    /*
+     * The player is waiting for data. Before the picture first moves that's normal start-up
+     * ("Loading…"); afterwards it's a stall in the middle of the programme ("Buffering…"),
+     * which the app counts to suggest a bigger buffer.
+     */
+    function buffering(token) {
+        if (token !== playToken) return;
+        if (startedToken === token) {
+            status('Buffering…');
+            if (listener && listener.onStall) listener.onStall();
+        } else {
+            status('Loading…');
+        }
     }
 
     /*
@@ -146,7 +162,7 @@
         try {
             avplay.open(url);
             avplay.setListener({
-                onbufferingstart: function () { if (token === playToken) status('Loading…'); },
+                onbufferingstart: function () { buffering(token); },
                 onbufferingprogress: function () {},
                 onbufferingcomplete: function () { if (token === playToken) status(null); },
                 onstreamcompleted: function () {
@@ -215,7 +231,7 @@
         placeElement(htmlEl, rect);
         // Browsers can't play raw MPEG-TS; Xtream panels serve the same channel as HLS.
         var src = global.Xtream.viaProxy(url.replace(/\.ts$/, '.m3u8'));
-        htmlEl.onwaiting = function () { if (token === playToken) status('Loading…'); };
+        htmlEl.onwaiting = function () { buffering(token); };
         htmlEl.onplaying = function () { if (token === playToken) status(null); };
         htmlEl.onerror = function () { if (token === playToken) fail('Playback failed. The channel may be offline.'); };
         status('Loading…');
