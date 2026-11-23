@@ -72,9 +72,12 @@ The colour buttons work everywhere: 🔴 **Red** favorite · 🟢 **Green** guid
 | Categories | Reorder & hide (Favorites, All channels and the menu entries stay on top) |
 | Refresh channel list · Sign out | |
 
-If the picture keeps pausing to buffer (twice within a few minutes), FrameCast offers to switch to a bigger
-buffer: **OK** switches and restarts the channel, **BACK** says not now and it won't ask again for 30 minutes.
-On the biggest buffer it tells you the channel or connection is the likely problem instead.
+If the picture pauses to buffer (twice within a few minutes, or once for 5 seconds or more, including a picture
+that just freezes), FrameCast offers to switch to a bigger buffer: **OK** switches and restarts the channel,
+**BACK** says not now and it won't ask again for 30 minutes. If it happens while the menu is open or in the
+preview, it asks when you're back in full screen. On the biggest buffer it tells you the channel or connection
+is the likely problem instead. Recent stalls are logged on the TV for troubleshooting (`FrameCast.stalls()` in
+the debugger).
 
 If a channel doesn't connect, FrameCast retries it automatically (up to three attempts) before showing an
 error. If it still can't play, it says why, for example *"The channel is not available right now

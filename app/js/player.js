@@ -30,11 +30,56 @@
     var failedToken = -1;  // once a stream has failed, its late "Loading…" events must not hide the error
     var startedToken = -1; // the attempt whose picture has started moving
 
+    /*
+     * Stall tracking. A stall is any time the picture stops in the middle of a programme:
+     *  - 'event':  the player says it's buffering (AVPlay onbufferingstart / <video> "waiting")
+     *  - 'frozen': the playback position hasn't moved for FROZEN_MS, with no event at all
+     *    (live streams on Tizen can just freeze). Only checked once position updates have
+     *    been seen for this channel, so a player that never reports them can't false-alarm.
+     */
+    var FROZEN_MS = 3000;
+    var stall = null;           // { token, since, source } while stuck
+    var lastAdvanceAt = 0;      // when the playback position last moved
+    var lastPos = -1;
+    var progressSeen = false;   // position updates arrive for this attempt
+    var suspended = false;
+
     function status(text) {
         if (failedToken === playToken) return;
         // Any "not loading" status means the picture is moving: stop the start-up watchdog.
-        if (!text) { clearTimeout(watchdog); startedToken = playToken; }
+        if (!text) {
+            clearTimeout(watchdog);
+            if (startedToken !== playToken) { startedToken = playToken; lastAdvanceAt = Date.now(); }
+        }
         if (listener && listener.onStatus) listener.onStatus(text);
+    }
+
+    function beginStall(token, source) {
+        if (token !== playToken || stall || startedToken !== token || failedToken === token) return;
+        stall = { token: token, since: Date.now(), source: source };
+        if (listener && listener.onStatus) listener.onStatus('Buffering…');
+        if (listener && listener.onStall) listener.onStall({ phase: 'start', source: source });
+    }
+
+    function endStall() {
+        var s = stall;
+        stall = null;
+        if (!s) return;
+        lastAdvanceAt = Date.now();
+        status(null);
+        if (listener && listener.onStall) listener.onStall({ phase: 'end', source: s.source, ms: Date.now() - s.since });
+    }
+
+    /** The playback position moved (AVPlay oncurrentplaytime / <video> timeupdate). */
+    function progressed(token, pos) {
+        if (token !== playToken || pos === lastPos) return;
+        lastPos = pos;
+        progressSeen = true;
+        lastAdvanceAt = Date.now();
+        // Only a 'frozen' stall ends on movement. One the player announced ends when the player
+        // says it's playing again: a last position update often arrives just after "buffering",
+        // and ending on it would count the same stall twice.
+        if (stall && stall.source === 'frozen') endStall();
     }
 
     /*
@@ -44,13 +89,22 @@
      */
     function buffering(token) {
         if (token !== playToken) return;
-        if (startedToken === token) {
-            status('Buffering…');
-            if (listener && listener.onStall) listener.onStall();
-        } else {
-            status('Loading…');
-        }
+        if (startedToken === token) beginStall(token, 'event');
+        else status('Loading…');
     }
+
+    /** The player says it has enough data again. */
+    function buffered(token) {
+        if (token !== playToken) return;
+        if (stall) endStall(); else status(null);
+    }
+
+    // Frozen-picture check, once a second.
+    setInterval(function () {
+        if (!currentUrl || suspended || stall || !progressSeen) return;
+        if (startedToken !== playToken || failedToken === playToken) return;
+        if (Date.now() - lastAdvanceAt > FROZEN_MS) beginStall(playToken, 'frozen');
+    }, 1000);
 
     /*
      * A failed attempt. Temporary problems (no connection, timeouts, server errors) are
@@ -87,6 +141,9 @@
 
     function startAttempt() {
         playToken++;
+        stall = null;
+        lastPos = -1;
+        progressSeen = false;
         armWatchdog(playToken);
         if (avplay) avplayPlay(currentUrl, playToken);
         else htmlPlay(currentUrl, playToken);
@@ -164,14 +221,14 @@
             avplay.setListener({
                 onbufferingstart: function () { buffering(token); },
                 onbufferingprogress: function () {},
-                onbufferingcomplete: function () { if (token === playToken) status(null); },
+                onbufferingcomplete: function () { buffered(token); },
                 onstreamcompleted: function () {
                     if (token === playToken) fail('The stream ended.');
                 },
                 onerror: function (type) {
                     if (token === playToken) fail(describeAvplayError(type), isPermanentAvplayError(type));
                 },
-                oncurrentplaytime: function () {},
+                oncurrentplaytime: function (ms) { progressed(token, ms); },
                 onevent: function () {}
             });
             avplay.setDisplayRect(rect.x, rect.y, rect.w, rect.h);
@@ -232,7 +289,8 @@
         // Browsers can't play raw MPEG-TS; Xtream panels serve the same channel as HLS.
         var src = global.Xtream.viaProxy(url.replace(/\.ts$/, '.m3u8'));
         htmlEl.onwaiting = function () { buffering(token); };
-        htmlEl.onplaying = function () { if (token === playToken) status(null); };
+        htmlEl.onplaying = function () { buffered(token); };
+        htmlEl.ontimeupdate = function () { progressed(token, htmlEl.currentTime); };
         htmlEl.onerror = function () { if (token === playToken) fail('Playback failed. The channel may be offline.'); };
         status('Loading…');
         function start() {
@@ -310,6 +368,7 @@
 
         stop: function () {
             playToken++;
+            stall = null;
             clearTimeout(watchdog);
             clearTimeout(retryTimer);
             currentUrl = null;
@@ -334,11 +393,15 @@
         /** App hidden (Home button / source change): release the decoder, resume later. */
         suspend: function () {
             if (!currentUrl) return;
+            suspended = true;
+            stall = null;
             if (avplay) { try { avplay.suspend(); } catch (e) { avplayStop(); } }
             else htmlEl.pause();
         },
 
         resume: function () {
+            suspended = false;
+            lastAdvanceAt = Date.now();
             if (!currentUrl) return;
             if (avplay) {
                 try { avplay.restore(); }

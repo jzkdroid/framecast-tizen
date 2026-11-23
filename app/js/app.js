@@ -163,6 +163,7 @@
         // The preview window only exists on the browse screen.
         document.body.classList.toggle('video-under', name === 'browse' && $('preview').classList.contains('live'));
         updateClock();
+        if (name === 'player') setTimeout(showPendingBufferPrompt, 0);
     }
 
     /* ------------------------------------------------------------------ */
@@ -908,22 +909,43 @@
     /* Buffering suggestion: the picture keeps pausing mid-programme       */
     /* ------------------------------------------------------------------ */
 
-    var STALL_WINDOW_MS = 3 * 60 * 1000;     // 2 stalls within 3 minutes…
+    // Suggest a bigger buffer after 2 stalls within 3 minutes, or one stall lasting 5+ seconds.
+    var STALL_WINDOW_MS = 3 * 60 * 1000;
     var STALLS_TO_SUGGEST = 2;
-    var PROMPT_SNOOZE_MS = 30 * 60 * 1000;   // …and don't ask again for 30 minutes after "Not now"
+    var LONG_STALL_MS = 5000;
+    var PROMPT_SNOOZE_MS = 30 * 60 * 1000;   // don't ask again for 30 minutes after "Not now"
     var NEXT_BUFFER = { fast: 'balanced', balanced: 'stable' };
     S.stalls = [];
     S.bufferPrompt = null;                   // the buffer setting being offered, while the prompt is up
+    S.pendingBufferPrompt = null;            // offered while the overlay/another screen was up
     var promptSnoozedAt = 0, maxedHintShown = false;
 
-    function onStall() {
-        var now = Date.now();
-        S.stalls = S.stalls.filter(function (t) { return now - t < STALL_WINDOW_MS; });
-        S.stalls.push(now);
-        if (S.stalls.length < STALLS_TO_SUGGEST || S.bufferPrompt) return;
-        if (now - promptSnoozedAt < PROMPT_SNOOZE_MS) return;
+    /** evt: { phase: 'start'|'end', source: 'event'|'frozen', ms (on end) } from the player. */
+    var MIN_STALL_MS = 1000;   // hiccups shorter than this (common right after a channel starts) don't count
 
+    function onStall(evt) {
+        if (evt.phase === 'end') {
+            clearTimeout(timers.countStall);
+            clearTimeout(timers.longStall);
+            logStall({ end: true, ms: evt.ms, src: evt.source });
+            return;
+        }
+        logStall({ src: evt.source });
+        later('countStall', MIN_STALL_MS, function () {
+            var now = Date.now();
+            S.stalls = S.stalls.filter(function (t) { return now - t < STALL_WINDOW_MS; });
+            S.stalls.push(now);
+            if (S.stalls.length >= STALLS_TO_SUGGEST) suggestBiggerBuffer('repeated');
+        });
+        // A single long stall is reason enough too.
+        later('longStall', LONG_STALL_MS, function () { suggestBiggerBuffer('long'); });
+    }
+
+    function suggestBiggerBuffer(reason) {
+        if (S.bufferPrompt || S.pendingBufferPrompt) return;
+        if (Date.now() - promptSnoozedAt < PROMPT_SNOOZE_MS) return;
         var next = NEXT_BUFFER[Settings.get('buffer')];
+        logStall({ suggest: next || 'max', why: reason });
         if (!next) {
             // Already on the biggest buffer: more buffering won't help, so say what will.
             if (!maxedHintShown) {
@@ -935,8 +957,23 @@
         showBufferPrompt(next);
     }
 
+    /*
+     * A small log of recent stalls kept on the TV, so missed or unexpected prompts can be
+     * diagnosed later: FrameCast.stalls() in the dev tools console.
+     */
+    function logStall(entry) {
+        entry.at = new Date().toISOString().slice(11, 19);
+        entry.buf = Settings.get('buffer');
+        entry.screen = S.overlay ? 'overlay' : S.screen;
+        var log = Store.read('stallLog', []);
+        log.unshift(entry);
+        Store.write('stallLog', log.slice(0, 40));
+    }
+
     function showBufferPrompt(next) {
-        if (S.screen !== 'player' || S.overlay) return;
+        // Only over the full-screen picture; otherwise keep it for when you're back there.
+        if (S.screen !== 'player' || S.overlay) { S.pendingBufferPrompt = next; return; }
+        S.pendingBufferPrompt = null;
         S.bufferPrompt = next;
         var label = Settings.optionLabel('buffer', next), secs = Settings.buffer(next).play;
         $('buffer-prompt-text').textContent = 'Switch Buffering to "' + label + '" (' + secs + ' s)? ' +
@@ -958,6 +995,14 @@
             promptSnoozedAt = Date.now();
         }
         S.stalls = [];
+    }
+
+    /** Back on the full-screen picture: show a suggestion that came up while you were elsewhere. */
+    function showPendingBufferPrompt() {
+        var next = S.pendingBufferPrompt;
+        if (!next || S.screen !== 'player' || S.overlay || !S.playing) return;
+        if (Settings.get('buffer') === next || NEXT_BUFFER[Settings.get('buffer')] !== next) { S.pendingBufferPrompt = null; return; }
+        showBufferPrompt(next);
     }
 
     /* ------------------------------------------------------------------ */
@@ -983,6 +1028,7 @@
         if (!S.overlay) return;
         S.overlay = false;
         $('overlay').classList.add('hidden');
+        setTimeout(showPendingBufferPrompt, 0);
     }
 
     function loadOverlayChannels(sel) {
@@ -1394,5 +1440,9 @@
     init();
 
     // Exposed for debugging from the dev tools console.
-    global.FrameCast = { state: S, timings: function () { return Store.read('startupTimings', []); } };
+    global.FrameCast = {
+        state: S,
+        timings: function () { return Store.read('startupTimings', []); },
+        stalls: function () { return Store.read('stallLog', []); }
+    };
 })(window);
